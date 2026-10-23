@@ -1,0 +1,27 @@
+# Data cache and runtime logs
+limits.json
+limits.json.tmp
+overlay.log
+.env
+*.env
+
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Screenshots & media (only keep docs/screenshots/)
+*.png
+!docs/screenshots/*.png
+*.jpg
+*.jpeg
+*.gif
+
+# IDE and OS metadata
+.idea/
+.vscode/
+*.swp
+*.bak
+*~
+Thumbs.db
+Desktop.ini
