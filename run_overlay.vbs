@@ -4,7 +4,7 @@ Option Explicit
 Dim objShell, objFSO, strScriptDir, strPsScript, strCommand
 
 Set objFSO = CreateObject("Scripting.FileSystemObject")
-strScriptDir = objFSO.GetParentFolderName(WScript.ScriptFullName)
+strScriptDir = objFSO.GetParentFolderName(objFSO.GetAbsolutePathName(WScript.ScriptFullName))
 strPsScript = strScriptDir & "\limits_overlay.ps1"
 If Not objFSO.FileExists(strPsScript) Then
     strPsScript = strScriptDir & "\agy_limits_overlay.ps1"

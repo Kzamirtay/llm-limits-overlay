@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 LLM Quota / Limits Fetcher
-Discovers active language server instances from /proc,
-queries RetrieveUserQuotaSummary via Connect RPC (Gemini / Claude),
+Queries Antigravity (Gemini / Claude / GPT) via agy CLI (-p /usage --output-format json),
+with Linux /proc Language Server fallback for WSL mode,
 fetches OpenRouter and Kimi usages,
 and atomically writes structured quota state (both remaining and consumed) to shared JSON files.
 """
@@ -12,10 +12,14 @@ import sys
 import glob
 import json
 import time
+import shutil
+import tempfile
+import subprocess
 import urllib.request
 from datetime import datetime, timezone
 
 HTTP_TIMEOUT_SECONDS = 3.5
+_MEMORY_CACHE = None
 
 def get_shared_limits_paths():
     """Returns list of paths where limits.json should be written/read, fully dynamic without hardcoded paths."""
@@ -308,7 +312,152 @@ def query_kimi_quota():
         res["error"] = str(e)
         return res
 
-def query_live_quota():
+# ------------------------------------------------------------------------------
+# Antigravity (Gemini & Claude/GPT) Quota Discovery & Caching
+# ------------------------------------------------------------------------------
+
+def get_cache_file_path():
+    """Returns path to cached agy /usage response file."""
+    return os.path.join(tempfile.gettempdir(), "llm_limits_agy_usage_cache.json")
+
+def get_quota_cache_seconds():
+    """Returns cache duration in seconds (default: 300s)."""
+    val = os.environ.get("LLM_LIMITS_QUOTA_CACHE_SECONDS", "").strip()
+    if val:
+        try:
+            return max(0.0, float(val))
+        except ValueError:
+            pass
+    return 300.0
+
+def get_cached_agy_usage():
+    """Retrieves cached agy usage response if valid and not expired."""
+    global _MEMORY_CACHE
+    cache_ttl = get_quota_cache_seconds()
+    now = time.time()
+
+    # 1. In-memory cache check
+    if _MEMORY_CACHE and isinstance(_MEMORY_CACHE, dict):
+        ts = _MEMORY_CACHE.get("timestamp", 0)
+        age = now - ts
+        if 0 <= age < cache_ttl:
+            sys.stderr.write(f"[cache] agy /usage cache hit in-memory (age {age:.1f}s <= {cache_ttl:.0f}s), agy.exe not respawned\n")
+            return _MEMORY_CACHE.get("raw"), _MEMORY_CACHE.get("data")
+
+    # 2. Disk cache check
+    cache_file = get_cache_file_path()
+    if os.path.isfile(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            ts = cached.get("timestamp", 0)
+            age = now - ts
+            if 0 <= age < cache_ttl and "raw" in cached and "data" in cached:
+                _MEMORY_CACHE = cached
+                sys.stderr.write(f"[cache] agy /usage cache hit (age {age:.1f}s <= {cache_ttl:.0f}s), agy.exe not respawned\n")
+                return cached["raw"], cached["data"]
+        except Exception:
+            pass
+
+    return None, None
+
+def save_cached_agy_usage(raw_obj, data_obj):
+    """Saves valid agy usage response in-memory and to disk cache without any secrets."""
+    global _MEMORY_CACHE
+    now = time.time()
+    cache_record = {
+        "timestamp": now,
+        "raw": raw_obj,
+        "data": data_obj
+    }
+    _MEMORY_CACHE = cache_record
+    cache_file = get_cache_file_path()
+    try:
+        tmp_file = cache_file + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(cache_record, f, ensure_ascii=False)
+        os.replace(tmp_file, cache_file)
+    except Exception:
+        pass
+
+def find_agy_binary():
+    r"""
+    Locates agy binary in order:
+    1. LLM_LIMITS_AGY_BIN
+    2. agy.exe / agy on PATH
+    3. %LOCALAPPDATA%\agy\bin\agy.exe
+    4. %USERPROFILE%\AppData\Local\agy\bin\agy.exe
+    """
+    # 1. env LLM_LIMITS_AGY_BIN
+    env_bin = os.environ.get("LLM_LIMITS_AGY_BIN", "").strip()
+    if env_bin and os.path.isfile(env_bin):
+        return env_bin
+
+    # 2. agy.exe or agy on PATH
+    for name in ["agy.exe", "agy"]:
+        found = shutil.which(name)
+        if found and os.path.isfile(found):
+            return found
+
+    # 3. %LOCALAPPDATA%\agy\bin\agy.exe
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        cand = os.path.join(local_app_data, "agy", "bin", "agy.exe")
+        if os.path.isfile(cand):
+            return cand
+
+    # 4. %USERPROFILE%\AppData\Local\agy\bin\agy.exe
+    user_prof = os.environ.get("USERPROFILE", "")
+    if user_prof:
+        cand = os.path.join(user_prof, "AppData", "Local", "agy", "bin", "agy.exe")
+        if os.path.isfile(cand):
+            return cand
+
+    # Home dir expansion fallback
+    home = os.path.expanduser("~")
+    cand = os.path.join(home, "AppData", "Local", "agy", "bin", "agy.exe")
+    if os.path.isfile(cand):
+        return cand
+
+    # WSL mount path if run inside WSL
+    if sys.platform.startswith("linux") or os.path.isdir("/mnt/c"):
+        wsl_candidates = [
+            "/mnt/c/Users/Dimash/AppData/Local/agy/bin/agy.exe",
+            os.path.expanduser("~/.local/bin/agy"),
+            "/usr/local/bin/agy",
+            "/usr/bin/agy"
+        ]
+        for wc in wsl_candidates:
+            if os.path.isfile(wc):
+                return wc
+
+    return None
+
+def extract_last_json(text):
+    """Tolerate CRLF and leading noise before the JSON line (parse the last JSON object in stdout)."""
+    if not text:
+        return None
+    lines = text.strip().splitlines()
+    for line in reversed(lines):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                return json.loads(line)
+            except Exception:
+                pass
+
+    # Fallback: find outermost JSON brackets from the end
+    start = text.rfind("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start:end+1])
+        except Exception:
+            pass
+    return None
+
+def query_live_quota_proc():
+    """Fallback Language Server discovery via Linux /proc/[0-9]*/environ for WSL mode."""
     checked_tokens = set()
     for p in glob.glob('/proc/[0-9]*/environ'):
         try:
@@ -340,6 +489,99 @@ def query_live_quota():
             continue
     return None, None
 
+def fetch_agy_quota():
+    """
+    Executes agy -p /usage --output-format json with 60s timeout,
+    CREATE_NO_WINDOW, no console flash, captures stdout.
+    Caches result for 300s.
+    Returns: (command_data, raw_envelope, error_message, is_cached)
+    """
+    # 1. Cache lookup
+    cached_raw, cached_data = get_cached_agy_usage()
+    if cached_raw is not None and cached_data is not None:
+        return cached_data, cached_raw, None, True
+
+    # 2. Locate agy binary
+    agy_bin = find_agy_binary()
+    if not agy_bin:
+        # Fallback to /proc if on Linux / WSL
+        if sys.platform.startswith("linux") or os.path.isdir("/proc"):
+            proc_resp, proc_addr = query_live_quota_proc()
+            if proc_resp:
+                return proc_resp, proc_resp, None, False
+        return None, None, "missing agy.exe (not found in LLM_LIMITS_AGY_BIN, PATH, or AppData)", False
+
+    # 3. Execute subprocess
+    sys.stderr.write(f"[live] running {agy_bin} -p /usage --output-format json...\n")
+    cmd = [agy_bin, "-p", "/usage", "--output-format", "json"]
+
+    creationflags = 0
+    if sys.platform.startswith("win"):
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+            creationflags=creationflags
+        )
+    except subprocess.TimeoutExpired:
+        if sys.platform.startswith("linux") or os.path.isdir("/proc"):
+            proc_resp, proc_addr = query_live_quota_proc()
+            if proc_resp:
+                return proc_resp, proc_resp, None, False
+        return None, None, "timeout after 60s executing agy", False
+    except Exception as e:
+        if sys.platform.startswith("linux") or os.path.isdir("/proc"):
+            proc_resp, proc_addr = query_live_quota_proc()
+            if proc_resp:
+                return proc_resp, proc_resp, None, False
+        return None, None, f"failed to spawn agy: {e}", False
+
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+
+    if proc.returncode != 0:
+        combined = (stdout + " " + stderr).lower()
+        if "auth" in combined or "login" in combined or "unauthorized" in combined:
+            err = "auth required"
+        else:
+            err = f"agy failed with exit code {proc.returncode}: {stderr.strip() or stdout.strip()}"
+
+        if sys.platform.startswith("linux") or os.path.isdir("/proc"):
+            proc_resp, proc_addr = query_live_quota_proc()
+            if proc_resp:
+                return proc_resp, proc_resp, None, False
+        return None, None, err, False
+
+    parsed = extract_last_json(stdout)
+    if not parsed or not isinstance(parsed, dict):
+        if sys.platform.startswith("linux") or os.path.isdir("/proc"):
+            proc_resp, proc_addr = query_live_quota_proc()
+            if proc_resp:
+                return proc_resp, proc_resp, None, False
+        return None, None, "parse failed: invalid JSON output from agy", False
+
+    status_str = str(parsed.get("status", "")).upper()
+    if status_str in ["ERROR", "FAILED"]:
+        resp_text = parsed.get("response", "")
+        if "auth" in resp_text.lower() or "login" in resp_text.lower():
+            err = "auth required"
+        else:
+            err = f"agy error: {resp_text or 'unknown'}"
+        return None, None, err, False
+
+    # Extract inner command data
+    cmd_data = parsed.get("command", {}).get("data")
+    if not cmd_data:
+        cmd_data = parsed.get("response") or parsed
+
+    save_cached_agy_usage(parsed, cmd_data)
+    return cmd_data, parsed, None, False
+
 def parse_quota_data(resp):
     default_bucket = {
         "percent": 100.0,
@@ -360,14 +602,35 @@ def parse_quota_data(resp):
     if not resp or not isinstance(resp, dict):
         return result
 
-    groups = resp.get("groups", [])
+    if "command" in resp and isinstance(resp["command"], dict):
+        data_obj = resp["command"].get("data", {})
+    elif "response" in resp and isinstance(resp["response"], dict):
+        data_obj = resp["response"]
+    else:
+        data_obj = resp
+
+    groups = data_obj.get("groups", [])
     for group in groups:
-        gname = group.get("displayName", "").lower()
+        gname = (group.get("name") or group.get("displayName") or "").lower()
         for b in group.get("buckets", []):
-            bid = b.get("bucketId", "").lower()
-            window = b.get("window", "").lower()
-            frac = b.get("remainingFraction", 1.0)
-            reset_time = b.get("resetTime", "")
+            bid = (b.get("id") or b.get("bucketId") or "").lower()
+            window = (b.get("window") or "").lower()
+
+            if "remaining_fraction" in b:
+                frac = b.get("remaining_fraction")
+            elif "remainingFraction" in b:
+                frac = b.get("remainingFraction")
+            else:
+                frac = 1.0
+
+            if frac is None:
+                frac = 1.0
+            try:
+                frac = float(frac)
+            except (ValueError, TypeError):
+                frac = 1.0
+
+            reset_time = b.get("reset_time") or b.get("resetTime") or ""
             percent = round(frac * 100, 1)
 
             # Consumed / Used quota
@@ -384,20 +647,32 @@ def parse_quota_data(resp):
                 "reset_in": reset_in,
                 "reset_time": reset_time,
                 "level": level,
-                "displayName": b.get("displayName", bid),
+                "displayName": b.get("name") or b.get("displayName", bid),
                 "description": b.get("description", "")
             }
 
-            if "gemini" in gname or "gemini" in bid:
+            # Map by window value plus group name (NOT by bucket id alone; ids differ: gemini-* vs 3p-*)
+            if "gemini" in gname:
                 if window == "5h" or "5h" in bid:
                     result["gemini_5h"] = info
                 elif window == "weekly" or "weekly" in bid:
                     result["gemini_weekly"] = info
-            elif "claude" in gname or "3p" in bid or "gpt" in gname:
+            elif "claude" in gname or "gpt" in gname or "3p" in gname:
                 if window == "5h" or "5h" in bid:
                     result["claude_5h"] = info
                 elif window == "weekly" or "weekly" in bid:
                     result["claude_weekly"] = info
+            else:
+                if "gemini" in bid:
+                    if window == "5h" or "5h" in bid:
+                        result["gemini_5h"] = info
+                    elif window == "weekly" or "weekly" in bid:
+                        result["gemini_weekly"] = info
+                elif "3p" in bid or "claude" in bid or "gpt" in bid:
+                    if window == "5h" or "5h" in bid:
+                        result["claude_5h"] = info
+                    elif window == "weekly" or "weekly" in bid:
+                        result["claude_weekly"] = info
 
     return result
 
@@ -410,11 +685,6 @@ def main():
 
     if simulate_delay > 0:
         time.sleep(simulate_delay)
-
-    if simulate_offline:
-        resp, addr = None, None
-    else:
-        resp, addr = query_live_quota()
 
     now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -429,19 +699,28 @@ def main():
             except Exception:
                 pass
 
-    if resp:
-        parsed = parse_quota_data(resp)
+    if simulate_offline:
+        data, raw, err_msg, is_cached = None, None, "offline (simulated)", False
+    else:
+        data, raw, err_msg, is_cached = fetch_agy_quota()
+
+    if data:
+        parsed = parse_quota_data(data or raw)
         payload = {
             "status": "online",
             "last_updated": now_iso,
-            "ls_address": addr,
+            "ls_address": None,
             "data": parsed,
-            "raw": resp
+            "raw": raw
         }
+        if is_cached:
+            payload["cache_hit"] = True
     else:
         if last_cache and "data" in last_cache:
-            payload = last_cache
-            payload["status"] = "stale (agy idle)"
+            data_buckets = {
+                k: v for k, v in last_cache["data"].items()
+                if k in ["gemini_5h", "gemini_weekly", "claude_5h", "claude_weekly"]
+            }
         else:
             default_item = {
                 "percent": 100.0,
@@ -449,19 +728,24 @@ def main():
                 "used_percent": 0.0,
                 "used_fraction": 0.0,
                 "reset_in": "N/A",
+                "reset_time": "",
                 "level": "unknown"
             }
-            payload = {
-                "status": "offline",
-                "last_updated": now_iso,
-                "ls_address": None,
-                "data": {
-                    "gemini_5h": dict(default_item),
-                    "gemini_weekly": dict(default_item),
-                    "claude_5h": dict(default_item),
-                    "claude_weekly": dict(default_item),
-                }
+            data_buckets = {
+                "gemini_5h": dict(default_item),
+                "gemini_weekly": dict(default_item),
+                "claude_5h": dict(default_item),
+                "claude_weekly": dict(default_item),
             }
+
+        payload = {
+            "status": "error",
+            "error": err_msg or "Failed to query quota",
+            "last_updated": now_iso,
+            "ls_address": None,
+            "data": data_buckets,
+            "raw": None
+        }
 
     # Query OpenRouter quota and attach
     openrouter_data = query_openrouter_quota()

@@ -43,35 +43,233 @@ if ([string]::IsNullOrEmpty($ScriptDir)) {
     $ScriptDir = (Get-Location).Path
 }
 
-# Dynamic limits.json and log file locations relative to script directory
+# Dynamic limits.json, log file, and config locations relative to script directory
 $LimitsJsonPath = Join-Path $ScriptDir "limits.json"
 $LogFile = Join-Path $ScriptDir "overlay.log"
+$ConfigJsonPath = Join-Path $ScriptDir "overlay.config.json"
 
 # Fallback path (only used if file exists)
 $FallbackJsonPath = if ($env:USERPROFILE) {
     Join-Path $env:USERPROFILE ".gemini\antigravity-cli\limits.json"
 } else { $null }
 
-# WSL distribution configuration
-$WslDistro = if ($env:LLM_LIMITS_WSL_DISTRO) {
-    $env:LLM_LIMITS_WSL_DISTRO
-} elseif ($env:AGY_WSL_DISTRO) {
-    $env:AGY_WSL_DISTRO
-} else {
-    "Ubuntu-22.04"
+function Write-OverlayLog($msg) {
+    try {
+        $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Add-Content -Path $LogFile -Value "[$ts] $msg" -ErrorAction SilentlyContinue
+    } catch {}
 }
 
-# Resolve WSL fetch script path dynamically
-function Resolve-WslFetchScript {
+# ------------------------------------------------------------------------------
+# Backend & Environment Resolution Configuration
+# ------------------------------------------------------------------------------
+$script:resolvedNativePython = $null
+$script:resolvedWslDistro = $null
+
+function Get-OverlayConfig {
+    if (Test-Path $ConfigJsonPath) {
+        try {
+            $raw = Get-Content -Raw $ConfigJsonPath -ErrorAction SilentlyContinue
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                return ($raw | ConvertFrom-Json)
+            }
+        } catch {
+            Write-OverlayLog "Error reading ${ConfigJsonPath}: $_"
+        }
+    }
+    return $null
+}
+
+function Save-OverlayConfigField($field, $value) {
+    try {
+        $cfg = Get-OverlayConfig
+        if ($null -eq $cfg) {
+            $cfg = [pscustomobject]@{
+                backend = "windows"
+                pythonPath = ""
+                wslDistro = ""
+                timeoutSeconds = 0
+            }
+        }
+        $cfg | Add-Member -MemberType NoteProperty -Name $field -Value $value -Force
+        $jsonStr = $cfg | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($ConfigJsonPath, $jsonStr, [System.Text.Encoding]::UTF8)
+    } catch {
+        Write-OverlayLog "Error saving config ($field=$value): $_"
+    }
+}
+
+function Resolve-OverlayBackend {
+    # Precedence: env LLM_LIMITS_BACKEND -> overlay.config.json -> auto
+    if ($env:LLM_LIMITS_BACKEND) {
+        $b = $env:LLM_LIMITS_BACKEND.Trim().ToLower()
+        if ($b -in @("auto", "windows", "wsl")) {
+            return @{ Backend = $b; Source = "env LLM_LIMITS_BACKEND" }
+        }
+    }
+    $cfg = Get-OverlayConfig
+    if ($cfg -and -not [string]::IsNullOrWhiteSpace($cfg.backend)) {
+        $b = $cfg.backend.Trim().ToLower()
+        if ($b -in @("auto", "windows", "wsl")) {
+            return @{ Backend = $b; Source = "overlay.config.json" }
+        }
+    }
+    return @{ Backend = "auto"; Source = "default" }
+}
+
+function Test-PythonCandidate($cmd, $argsPrefix = @()) {
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $cmd
+        $prefix = if ($argsPrefix) { ($argsPrefix -join " ") + " " } else { "" }
+        $psi.Arguments = $prefix + "-c " + [char]34 + "import sys;print(sys.executable)" + [char]34
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $out = $proc.StandardOutput.ReadToEnd().Trim()
+        $null = $proc.WaitForExit(3000)
+        if ($proc.ExitCode -eq 0 -and [System.IO.File]::Exists($out)) {
+            return @{ Command = $cmd; PrefixArgs = $argsPrefix; Executable = $out }
+        }
+    } catch {}
+    return $null
+}
+
+function Cache-NativePython($res) {
+    $script:resolvedNativePython = $res
+    return $res
+}
+
+function Resolve-NativePython {
+    if ($null -ne $script:resolvedNativePython) {
+        return $script:resolvedNativePython
+    }
+
+    # Native interpreter resolution:
+    # 0. Config pythonPath
+    $cfg = Get-OverlayConfig
+    if ($cfg -and -not [string]::IsNullOrWhiteSpace($cfg.pythonPath)) {
+        $t = Test-PythonCandidate $cfg.pythonPath.Trim()
+        if ($t) { return (Cache-NativePython $t) }
+    }
+
+    # 1. LLM_LIMITS_PYTHON env
+    if ($env:LLM_LIMITS_PYTHON) {
+        $t = Test-PythonCandidate $env:LLM_LIMITS_PYTHON.Trim()
+        if ($t) { return (Cache-NativePython $t) }
+    }
+
+    # 2. py -3
+    $tPy = Test-PythonCandidate "py" @("-3")
+    if ($tPy) { return (Cache-NativePython $tPy) }
+
+    # 3. python.exe on PATH
+    $tPyExe = Test-PythonCandidate "python.exe"
+    if ($tPyExe) { return (Cache-NativePython $tPyExe) }
+
+    # 4. python3.exe on PATH
+    $tPy3Exe = Test-PythonCandidate "python3.exe"
+    if ($tPy3Exe) { return (Cache-NativePython $tPy3Exe) }
+
+    # 5. %LOCALAPPDATA%\Programs\Python\* / %LOCALAPPDATA%\Python\* / C:\Python3*
+    $candidates = @()
+    if ($env:LOCALAPPDATA) {
+        $candidates += (Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Programs\Python") -Filter "python.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+        $candidates += (Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Python") -Filter "python.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+    }
+    $candidates += (Get-ChildItem -Path "C:\Python3*" -Filter "python.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+
+    foreach ($cand in $candidates) {
+        if ([System.IO.File]::Exists($cand)) {
+            $t = Test-PythonCandidate $cand
+            if ($t) { return (Cache-NativePython $t) }
+        }
+    }
+
+    return $null
+}
+
+function Resolve-WslDistro {
+    if ($null -ne $script:resolvedWslDistro) {
+        return $script:resolvedWslDistro
+    }
+
+    # WSL mode: distro from LLM_LIMITS_WSL_DISTRO / AGY_WSL_DISTRO / config, else auto-detect from wsl.exe -l -q
+    if ($env:LLM_LIMITS_WSL_DISTRO) {
+        $script:resolvedWslDistro = $env:LLM_LIMITS_WSL_DISTRO.Trim()
+        return $script:resolvedWslDistro
+    }
+    if ($env:AGY_WSL_DISTRO) {
+        $script:resolvedWslDistro = $env:AGY_WSL_DISTRO.Trim()
+        return $script:resolvedWslDistro
+    }
+
+    $cfg = Get-OverlayConfig
+    if ($cfg -and -not [string]::IsNullOrWhiteSpace($cfg.wslDistro)) {
+        $script:resolvedWslDistro = $cfg.wslDistro.Trim()
+        return $script:resolvedWslDistro
+    }
+
+    try {
+        $rawList = (wsl.exe -l -q 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $rawList) {
+            $distros = @()
+            foreach ($item in $rawList) {
+                $clean = ($item -replace [char]0, "").Trim()
+                if (-not [string]::IsNullOrWhiteSpace($clean)) {
+                    $distros += $clean
+                }
+            }
+
+            foreach ($distro in $distros) {
+                if ($distro -like "docker-desktop*") { continue }
+                # Test if distro actually has python3 (allowing 25s for cold WSL boot)
+                try {
+                    $psi = New-Object System.Diagnostics.ProcessStartInfo
+                    $psi.FileName = "wsl.exe"
+                    $psi.Arguments = "-d " + $distro + " which python3"
+                    $psi.UseShellExecute = $false
+                    $psi.CreateNoWindow = $true
+                    $psi.RedirectStandardOutput = $true
+                    $psi.RedirectStandardError = $true
+                    $p = [System.Diagnostics.Process]::Start($psi)
+                    $out = $p.StandardOutput.ReadToEnd().Trim()
+                    $null = $p.WaitForExit(25000)
+                    if ($p.ExitCode -eq 0) {
+                        if ($out -and -not $out.Contains("no python3")) {
+                            Write-OverlayLog "Auto-detected WSL distro with python3: $distro ($out)"
+                            $script:resolvedWslDistro = $distro
+                            return $distro
+                        }
+                    } else {
+                        try { $p.Kill() } catch {}
+                    }
+                } catch {}
+            }
+        }
+    } catch {
+        Write-OverlayLog "Error querying wsl.exe distros: $_"
+    }
+
+    return $null
+}
+
+function Resolve-WslFetchScript($distro) {
     if ($env:LLM_LIMITS_WSL_SCRIPT) { return $env:LLM_LIMITS_WSL_SCRIPT }
     if ($env:AGY_WSL_SCRIPT) { return $env:AGY_WSL_SCRIPT }
+
+    if ([string]::IsNullOrWhiteSpace($distro)) {
+        return "fetch_quota.py"
+    }
 
     # Check local fetch_quota.py in same directory and translate to WSL path
     $localPy = Join-Path $ScriptDir "fetch_quota.py"
     if (Test-Path $localPy) {
         try {
             $p = ($localPy -replace '\\', '/')
-            $wslPath = (wsl.exe -d $WslDistro wslpath -u $p 2>$null)
+            $wslPath = (wsl.exe -d $distro wslpath -u $p 2>$null)
             if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($wslPath)) {
                 return $wslPath.Trim()
             }
@@ -80,7 +278,7 @@ function Resolve-WslFetchScript {
 
     # Query WSL user's home directory
     try {
-        $wslHome = (wsl.exe -d $WslDistro -e bash -lc 'echo $HOME' 2>$null)
+        $wslHome = (wsl.exe -d $distro -e bash -lc 'echo $HOME' 2>$null)
         if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($wslHome)) {
             $h = $wslHome.Trim()
             $candidates = @(
@@ -88,7 +286,7 @@ function Resolve-WslFetchScript {
                 "$h/agy-limits-overlay/fetch_quota.py"
             )
             foreach ($c in $candidates) {
-                $chk = (wsl.exe -d $WslDistro test -f $c 2>$null)
+                $chk = (wsl.exe -d $distro test -f $c 2>$null)
                 if ($LASTEXITCODE -eq 0) {
                     return $c
                 }
@@ -98,15 +296,6 @@ function Resolve-WslFetchScript {
     } catch {}
 
     return "fetch_quota.py"
-}
-
-$WslFetchScript = Resolve-WslFetchScript
-
-function Write-OverlayLog($msg) {
-    try {
-        $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-        Add-Content -Path $LogFile -Value "[$ts] $msg" -ErrorAction SilentlyContinue
-    } catch {}
 }
 
 # Trap global unhandled exceptions to log file
@@ -197,6 +386,12 @@ $Config = @{
     <Window.ContextMenu>
         <ContextMenu Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1">
             <MenuItem Name="MenuRefresh" Header="Обновить" Foreground="$($Config.MetaText)"/>
+            <Separator Background="#E2E8F0"/>
+            <MenuItem Name="MenuEnv" Header="Окружение" Foreground="$($Config.MetaText)">
+                <MenuItem Name="MenuBackendAuto" Header="Авто" IsCheckable="True" Foreground="$($Config.MetaText)"/>
+                <MenuItem Name="MenuBackendWindows" Header="Windows (нативный Python)" IsCheckable="True" Foreground="$($Config.MetaText)"/>
+                <MenuItem Name="MenuBackendWsl" Header="WSL" IsCheckable="True" Foreground="$($Config.MetaText)"/>
+            </MenuItem>
             <Separator Background="#E2E8F0"/>
             <MenuItem Name="MenuClose" Header="Закрыть" Foreground="$($Config.MetaText)"/>
         </ContextMenu>
@@ -436,11 +631,23 @@ if ($args -contains "-VerifyPosition") {
 # UI References
 $menuRefresh = $window.FindName("MenuRefresh")
 $menuClose = $window.FindName("MenuClose")
+$menuBackendAuto = $window.FindName("MenuBackendAuto")
+$menuBackendWindows = $window.FindName("MenuBackendWindows")
+$menuBackendWsl = $window.FindName("MenuBackendWsl")
 if ($null -eq $menuRefresh -and $window.ContextMenu) {
     foreach ($item in $window.ContextMenu.Items) {
         if ($item -is [System.Windows.Controls.MenuItem]) {
             if ($item.Header -eq "Обновить") { $menuRefresh = $item }
             if ($item.Header -eq "Закрыть") { $menuClose = $item }
+            if ($item.Header -eq "Окружение") {
+                foreach ($sub in $item.Items) {
+                    if ($sub -is [System.Windows.Controls.MenuItem]) {
+                        if ($sub.Header -eq "Авто") { $menuBackendAuto = $sub }
+                        if ($sub.Header -like "*Windows*") { $menuBackendWindows = $sub }
+                        if ($sub.Header -eq "WSL") { $menuBackendWsl = $sub }
+                    }
+                }
+            }
         }
     }
 }
@@ -494,11 +701,55 @@ $window.Add_MouseLeftButtonDown({
     }
 })
 
+function Update-MenuBackendSelection {
+    $res = Resolve-OverlayBackend
+    $current = $res.Backend
+    if ($menuBackendAuto) { $menuBackendAuto.IsChecked = ($current -eq "auto") }
+    if ($menuBackendWindows) { $menuBackendWindows.IsChecked = ($current -eq "windows") }
+    if ($menuBackendWsl) { $menuBackendWsl.IsChecked = ($current -eq "wsl") }
+}
+
+function Set-BackendFromMenu($newBackend) {
+    $script:resolvedNativePython = $null
+    $script:resolvedWslDistro = $null
+    Save-OverlayConfigField "backend" $newBackend
+    Write-OverlayLog "User switched backend to '$newBackend' via menu."
+    Update-MenuBackendSelection
+    $script:lastIsStale = $false
+    if ($script:fetchProc -and -not $script:fetchProc.HasExited) {
+        try {
+            $watchdogTimer.Stop()
+            $script:fetchProc.Kill()
+            $script:fetchProc.Dispose()
+        } catch {}
+        $script:fetchProc = $null
+    }
+    $script:isFetching = $false
+    Start-AsyncRefresh
+}
+
 if ($menuRefresh) {
     $menuRefresh.Add_Click({
         Start-AsyncRefresh
     })
 }
+
+if ($menuBackendAuto) {
+    $menuBackendAuto.Add_Click({ Set-BackendFromMenu "auto" })
+}
+if ($menuBackendWindows) {
+    $menuBackendWindows.Add_Click({ Set-BackendFromMenu "windows" })
+}
+if ($menuBackendWsl) {
+    $menuBackendWsl.Add_Click({ Set-BackendFromMenu "wsl" })
+}
+
+if ($window.ContextMenu) {
+    $window.ContextMenu.Add_Opened({
+        Update-MenuBackendSelection
+    })
+}
+Update-MenuBackendSelection
 
 if ($menuClose) {
     $menuClose.Add_Click({
@@ -868,10 +1119,11 @@ function Load-CacheFromDisk($statusOverride = $null) {
 # Pre-populate UI immediately from disk cache
 Load-CacheFromDisk
 
-# --- Asynchronous Non-Blocking Refresh with Hard 6s Timeout ---
+# --- Asynchronous Non-Blocking Refresh with Per-Backend Watchdog ---
 $script:isFetching = $false
 $script:fetchProc = $null
 $script:fetchWatch = $null
+$script:currentTimeoutMs = 6000
 
 $watchdogTimer = New-Object System.Windows.Threading.DispatcherTimer
 $watchdogTimer.Interval = [TimeSpan]::FromMilliseconds(150)
@@ -883,23 +1135,29 @@ $watchdogTimer.Add_Tick({
         return
     }
 
-    # Case 1: Process finished normally!
+    # Case 1: Process finished normally
     if ($script:fetchProc.HasExited) {
         $watchdogTimer.Stop()
         $exitCode = $script:fetchProc.ExitCode
+        $procId = try { $script:fetchProc.Id } catch { 0 }
         try { $script:fetchProc.Dispose() } catch {}
         $script:fetchProc = $null
         $script:isFetching = $false
         if ($menuRefresh) { $menuRefresh.IsEnabled = $true }
 
-        Write-OverlayLog "Async refresh process finished (exitCode=$exitCode)."
-        Load-CacheFromDisk
+        Write-OverlayLog "Async refresh process finished (PID=$procId, exitCode=$exitCode)."
+        if ($exitCode -eq 0) {
+            Load-CacheFromDisk
+        } else {
+            Load-CacheFromDisk "stale (exit $exitCode)"
+        }
         return
     }
 
-    # Case 2: Process exceeded 6-second timeout -> Kill & Stale Fallback
-    if ($script:fetchWatch.ElapsedMilliseconds -gt 6000) {
+    # Case 2: Process exceeded timeout -> Kill & Stale Fallback
+    if ($script:fetchWatch.ElapsedMilliseconds -gt $script:currentTimeoutMs) {
         $watchdogTimer.Stop()
+        $procId = try { $script:fetchProc.Id } catch { 0 }
         try {
             $script:fetchProc.Kill()
             $script:fetchProc.Dispose()
@@ -908,7 +1166,7 @@ $watchdogTimer.Add_Tick({
         $script:isFetching = $false
         if ($menuRefresh) { $menuRefresh.IsEnabled = $true }
 
-        Write-OverlayLog "Async refresh timed out after 6000ms. Process killed."
+        Write-OverlayLog "Async refresh timed out after $($script:currentTimeoutMs)ms (PID=$procId). Process killed."
         Load-CacheFromDisk "stale (timeout)"
         return
     }
@@ -919,6 +1177,79 @@ function Start-AsyncRefresh {
         return
     }
 
+    # 1. Resolve backend
+    $backendInfo = Resolve-OverlayBackend
+    $backendMode = $backendInfo.Backend
+    Write-OverlayLog "Resolved backend: '$backendMode' (source: $($backendInfo.Source))"
+
+    # 2. Determine execution target: native vs wsl
+    $cfg = Get-OverlayConfig
+    $cfgTimeoutSec = if ($cfg -and $cfg.timeoutSeconds -gt 0) { [double]$cfg.timeoutSeconds } else { 0.0 }
+
+    $targetIsWsl = $false
+    $pyCandidate = $null
+    $wslDistro = $null
+
+    if ($backendMode -eq "windows") {
+        $pyCandidate = Resolve-NativePython
+        if ($null -eq $pyCandidate) {
+            Write-OverlayLog "Native Python interpreter unavailable for backend 'windows'."
+            if ($txtUpdated) {
+                $txtUpdated.Text = "нет python"
+                $converter = New-Object System.Windows.Media.BrushConverter
+                $staleColor = if ($Config.UpdatedStaleText) { $Config.UpdatedStaleText } else { "#475569" }
+                $txtUpdated.Foreground = $converter.ConvertFromString($staleColor)
+            }
+            Load-CacheFromDisk "error (нет python)"
+            return
+        }
+        $targetIsWsl = $false
+    } elseif ($backendMode -eq "wsl") {
+        $wslDistro = Resolve-WslDistro
+        if ([string]::IsNullOrWhiteSpace($wslDistro)) {
+            Write-OverlayLog "WSL distro with python3 unavailable for backend 'wsl'."
+            if ($txtUpdated) {
+                $txtUpdated.Text = "нет wsl"
+                $converter = New-Object System.Windows.Media.BrushConverter
+                $staleColor = if ($Config.UpdatedStaleText) { $Config.UpdatedStaleText } else { "#475569" }
+                $txtUpdated.Foreground = $converter.ConvertFromString($staleColor)
+            }
+            Load-CacheFromDisk "error (нет wsl)"
+            return
+        }
+        $targetIsWsl = $true
+    } else {
+        # auto: try native Python first, then WSL as fallback
+        $pyCandidate = Resolve-NativePython
+        if ($null -ne $pyCandidate) {
+            $targetIsWsl = $false
+        } else {
+            Write-OverlayLog "Auto backend: native Python not found, probing WSL..."
+            $wslDistro = Resolve-WslDistro
+            if (-not [string]::IsNullOrWhiteSpace($wslDistro)) {
+                $targetIsWsl = $true
+            } else {
+                Write-OverlayLog "Auto backend: neither native Python nor WSL available."
+                if ($txtUpdated) {
+                    $txtUpdated.Text = "нет python"
+                    $converter = New-Object System.Windows.Media.BrushConverter
+                    $staleColor = if ($Config.UpdatedStaleText) { $Config.UpdatedStaleText } else { "#475569" }
+                    $txtUpdated.Foreground = $converter.ConvertFromString($staleColor)
+                }
+                Load-CacheFromDisk "error (нет python)"
+                return
+            }
+        }
+    }
+
+    # Watchdog timeout: native 6s, wsl 30s, or config override
+    if ($cfgTimeoutSec -gt 0) {
+        $script:currentTimeoutMs = [int]($cfgTimeoutSec * 1000)
+    } else {
+        $script:currentTimeoutMs = if ($targetIsWsl) { 30000 } else { 6000 }
+    }
+    $timeoutSec = [math]::Round($script:currentTimeoutMs / 1000, 1)
+
     $script:isFetching = $true
     if ($menuRefresh) { $menuRefresh.IsEnabled = $false }
     if ($null -ne $txtUpdated) {
@@ -927,38 +1258,53 @@ function Start-AsyncRefresh {
         $normalColor = if ($Config.MetaText) { $Config.MetaText } else { "#0F172A" }
         $txtUpdated.Foreground = $converter.ConvertFromString($normalColor)
     }
-    Write-OverlayLog "Starting async fetch via wsl.exe ($WslDistro)..."
 
     try {
-        $wslLimitsArg = ""
-        try {
-            $p = ($LimitsJsonPath -replace '\\', '/')
-            $w = (wsl.exe -d $WslDistro wslpath -u $p 2>$null)
-            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($w)) {
-                $wslLimitsArg = $w.Trim()
-            }
-        } catch {}
-
         $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = "wsl.exe"
-        $psi.Arguments = if ($wslLimitsArg) {
-            "-d $WslDistro python3 $WslFetchScript `"$wslLimitsArg`""
-        } else {
-            "-d $WslDistro python3 $WslFetchScript"
-        }
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
         $psi.RedirectStandardOutput = $false
         $psi.RedirectStandardError = $false
 
+        if ($targetIsWsl) {
+            Write-OverlayLog "Starting async fetch via wsl.exe ($wslDistro) [timeout ${timeoutSec}s]..."
+            $wslFetchScript = Resolve-WslFetchScript $wslDistro
+            $wslLimitsArg = ""
+            try {
+                $p = ($LimitsJsonPath -replace '\\', '/')
+                $w = (wsl.exe -d $wslDistro wslpath -u $p 2>$null)
+                if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($w)) {
+                    $wslLimitsArg = $w.Trim()
+                }
+            } catch {}
+
+            $psi.FileName = "wsl.exe"
+            $psi.Arguments = if ($wslLimitsArg) {
+                "-d $wslDistro python3 `"$wslFetchScript`" `"$wslLimitsArg`""
+            } else {
+                "-d $wslDistro python3 `"$wslFetchScript`""
+            }
+        } else {
+            $pyScript = Join-Path $ScriptDir "fetch_quota.py"
+            Write-OverlayLog "Starting async fetch via native Python ($($pyCandidate.Executable)) [timeout ${timeoutSec}s]..."
+            $psi.FileName = $pyCandidate.Executable
+            $psi.Arguments = "`"$pyScript`" `"$LimitsJsonPath`""
+        }
+
         $script:fetchProc = [System.Diagnostics.Process]::Start($psi)
+        $procId = $script:fetchProc.Id
+        Write-OverlayLog "Spawned refresh process (PID=$procId, cmd=$($psi.FileName) $($psi.Arguments))"
         $script:fetchWatch = [System.Diagnostics.Stopwatch]::StartNew()
         $watchdogTimer.Start()
     } catch {
         $script:isFetching = $false
         if ($menuRefresh) { $menuRefresh.IsEnabled = $true }
-        Write-OverlayLog "Exception starting wsl.exe: $_"
-        Load-CacheFromDisk "error (WSL unavailable)"
+        Write-OverlayLog "Exception starting refresh process: $_"
+        $errReason = if ($targetIsWsl) { "WSL unavailable" } else { "Python unavailable" }
+        if ($txtUpdated) {
+            $txtUpdated.Text = if ($targetIsWsl) { "нет wsl" } else { "нет python" }
+        }
+        Load-CacheFromDisk "error ($errReason)"
     }
 }
 
