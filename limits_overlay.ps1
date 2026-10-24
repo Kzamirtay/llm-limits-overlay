@@ -102,6 +102,7 @@ function Save-OverlayConfigField($field, $value) {
                 pythonPath = ""
                 wslDistro = ""
                 timeoutSeconds = 0
+                testHooks = $false
             }
         }
         $cfg | Add-Member -MemberType NoteProperty -Name $field -Value $value -Force
@@ -317,16 +318,25 @@ function Resolve-WslFetchScript($distro) {
     Write-OverlayLog "CRITICAL AppDomain Exception: $($e.ExceptionObject)"
 })
 
+$script:processStartTime = [DateTime]::UtcNow
+
+# Clean up any stale command file from prior runs immediately on startup
+$staleActionFile = Join-Path $ScriptDir ".tray-action"
+if (Test-Path $staleActionFile) {
+    try {
+        Remove-Item -Path $staleActionFile -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
+
 Write-OverlayLog "=== LLM Limits Overlay Starting (PID=$PID) ==="
 
-# Single instance enforcement: terminate older overlay instances if running
+# Single instance enforcement: terminate older overlay instances strictly from this worktree/directory
 try {
     $currentPid = $PID
     Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
-        $_.ProcessId -ne $currentPid -and (
-            ($_.CommandLine -like "*limits_overlay.ps1*" -or $_.CommandLine -like "*agy_limits_overlay.ps1*") -and
-            ($_.CommandLine -like "*$ScriptDir*" -or $_.CommandLine -notlike "*\llm-limits-overlay\*")
-        )
+        $_.ProcessId -ne $currentPid -and
+        ($_.CommandLine -like "*$ScriptDir*") -and
+        ($_.CommandLine -like "*limits_overlay.ps1*" -or $_.CommandLine -like "*agy_limits_overlay.ps1*")
     } | ForEach-Object {
         $priorPid = $_.ProcessId
         Write-OverlayLog "Terminating prior overlay instance (PID=$priorPid)."
@@ -626,6 +636,11 @@ Update-OverlayPosition
 
 $window.Add_ContentRendered({
     Update-OverlayPosition
+    try {
+        $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $vis = [WindowStyles]::IsWindowVisible($h)
+        Write-OverlayLog "Window rendered and visible (HWND=$h, IsWindowVisible=$vis, Left=$($window.Left), Top=$($window.Top))."
+    } catch {}
 })
 
 $window.Add_SizeChanged({
@@ -816,6 +831,7 @@ $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
 $script:trayIcon.Icon = $script:trayIconObj
 $script:trayIcon.Text = "LLM Limits Overlay"
 $script:trayIcon.Visible = $true
+Write-OverlayLog "Tray icon created successfully (asset: $iconPath, visible: $($script:trayIcon.Visible))."
 
 function Cleanup-TrayIcon {
     try {
@@ -823,6 +839,7 @@ function Cleanup-TrayIcon {
             $script:trayIcon.Visible = $false
             $script:trayIcon.Dispose()
             $script:trayIcon = $null
+            Write-OverlayLog "Tray icon cleaned up and disposed."
         }
         if ($null -ne $script:trayIconObj) {
             $script:trayIconObj.Dispose()
@@ -1066,63 +1083,89 @@ $script:trayIcon.Add_DoubleClick({
 Update-MenuBackendSelection
 
 # Programmatic Tray Action Dispatcher (.tray-action file queue)
-$actionFile = Join-Path $ScriptDir ".tray-action"
-$actionTimer = New-Object System.Windows.Threading.DispatcherTimer
-$actionTimer.Interval = [TimeSpan]::FromMilliseconds(200)
-$actionTimer.Add_Tick({
-    if (Test-Path $actionFile) {
-        try {
-            $cmd = (Get-Content -Path $actionFile -Raw -ErrorAction SilentlyContinue).Trim()
-            Remove-Item -Path $actionFile -Force -ErrorAction SilentlyContinue
-            if (-not [string]::IsNullOrWhiteSpace($cmd)) {
-                switch -Regex ($cmd) {
-                    "^(toggle|toggle-visibility)$" {
-                        Toggle-OverlayVisibility
+# Hard-disabled by default; activates ONLY when "testHooks": true in overlay.config.json
+$cfg = Get-OverlayConfig
+$script:testHooksEnabled = ($cfg -and $cfg.testHooks -eq $true)
+
+if ($script:testHooksEnabled) {
+    Write-OverlayLog "Test hooks enabled via overlay.config.json (testHooks=true)."
+    $actionFile = Join-Path $ScriptDir ".tray-action"
+    $actionTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $actionTimer.Interval = [TimeSpan]::FromMilliseconds(200)
+    $actionTimer.Add_Tick({
+        if (Test-Path $actionFile) {
+            try {
+                $fi = Get-Item -Path $actionFile -ErrorAction SilentlyContinue
+                if ($null -eq $fi) { return }
+
+                # Stale check 1: file mtime must be newer than process start time
+                if ($fi.LastWriteTimeUtc -le $script:processStartTime) {
+                    Remove-Item -Path $actionFile -Force -ErrorAction SilentlyContinue
+                    Write-OverlayLog "Ignored stale .tray-action command file (mtime $($fi.LastWriteTimeUtc) <= process start $($script:processStartTime))."
+                    return
+                }
+
+                $cmd = (Get-Content -Path $actionFile -Raw -ErrorAction SilentlyContinue).Trim()
+                Remove-Item -Path $actionFile -Force -ErrorAction SilentlyContinue
+                if (-not [string]::IsNullOrWhiteSpace($cmd)) {
+                    # Startup grace period: exit / hide commands are ignored during the first 5 seconds
+                    $procAgeSec = ([DateTime]::UtcNow - $script:processStartTime).TotalSeconds
+                    if ($procAgeSec -lt 5.0 -and ($cmd -match "^(exit|toggle|toggle-visibility|hide)$")) {
+                        Write-OverlayLog "Ignored '$cmd' from .tray-action during startup grace period (${procAgeSec}s < 5.0s)."
+                        return
                     }
-                    "^show$" {
-                        if ($window.Visibility -ne [System.Windows.Visibility]::Visible) {
+
+                    switch -Regex ($cmd) {
+                        "^(toggle|toggle-visibility)$" {
                             Toggle-OverlayVisibility
                         }
-                    }
-                    "^hide$" {
-                        if ($window.Visibility -eq [System.Windows.Visibility]::Visible) {
-                            Toggle-OverlayVisibility
+                        "^show$" {
+                            if ($window.Visibility -ne [System.Windows.Visibility]::Visible) {
+                                Toggle-OverlayVisibility
+                            }
                         }
-                    }
-                    "^refresh$" {
-                        if ($script:trayMenuRefresh -and $script:trayMenuRefresh.Enabled) {
-                            Write-OverlayLog "Tray menu: 'Обновить квоты' clicked."
-                            Start-AsyncRefresh
+                        "^hide$" {
+                            if ($window.Visibility -eq [System.Windows.Visibility]::Visible) {
+                                Toggle-OverlayVisibility
+                            }
                         }
-                    }
-                    "^backend:(.+)$" {
-                        $b = $Matches[1].ToLower().Trim()
-                        if ($b -in @("auto", "windows", "wsl")) {
-                            Set-BackendFromMenu $b
+                        "^refresh$" {
+                            if ($script:trayMenuRefresh -and $script:trayMenuRefresh.Enabled) {
+                                Write-OverlayLog "Tray menu: 'Обновить квоты' clicked."
+                                Start-AsyncRefresh
+                            }
                         }
-                    }
-                    "^reset-pos$" {
-                        Reset-OverlayPosition
-                    }
-                    "^capture(?::(.+))?$" {
-                        $p = if ($Matches[1]) { $Matches[1].Trim() } else { $null }
-                        Capture-OverlayWindow $p
-                    }
-                    "^status$" {
-                        $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
-                        $v = [WindowStyles]::IsWindowVisible($h)
-                        $b = (Resolve-OverlayBackend).Backend
-                        Write-OverlayLog "Status query: Visibility=$($window.Visibility), Win32 IsWindowVisible=$v, Backend=$b, Left=$($window.Left), Top=$($window.Top)"
-                    }
-                    "^exit$" {
-                        Exit-Overlay
+                        "^backend:(.+)$" {
+                            $b = $Matches[1].ToLower().Trim()
+                            if ($b -in @("auto", "windows", "wsl")) {
+                                Set-BackendFromMenu $b
+                            }
+                        }
+                        "^reset-pos$" {
+                            Reset-OverlayPosition
+                        }
+                        "^capture(?::(.+))?$" {
+                            $p = if ($Matches[1]) { $Matches[1].Trim() } else { $null }
+                            Capture-OverlayWindow $p
+                        }
+                        "^status$" {
+                            $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+                            $v = [WindowStyles]::IsWindowVisible($h)
+                            $b = (Resolve-OverlayBackend).Backend
+                            Write-OverlayLog "Status query: Visibility=$($window.Visibility), Win32 IsWindowVisible=$v, Backend=$b, Left=$($window.Left), Top=$($window.Top)"
+                        }
+                        "^exit$" {
+                            Exit-Overlay
+                        }
                     }
                 }
-            }
-        } catch {}
-    }
-})
-$actionTimer.Start()
+            } catch {}
+        }
+    })
+    $actionTimer.Start()
+} else {
+    Write-OverlayLog "Test hooks disabled (testHooks=false in config). Command file .tray-action will not be monitored."
+}
 
 # ==============================================================================
 # МОНОХРОМНАЯ ШКАЛА РАСХОДА (Нейтральный темный графит, плавно темнеет с ростом %)
@@ -1697,6 +1740,11 @@ $clockTimer.Start()
 $mainTimer = New-Object System.Windows.Threading.DispatcherTimer
 $mainTimer.Interval = [TimeSpan]::FromSeconds(60)
 $mainTimer.Add_Tick({
+    try {
+        $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $vis = [WindowStyles]::IsWindowVisible($h)
+        Write-OverlayLog "Periodic watchdog tick (HWND=$h, IsWindowVisible=$vis)."
+    } catch {}
     Start-AsyncRefresh
 })
 $mainTimer.Start()
