@@ -45,16 +45,109 @@ def get_shared_limits_paths():
             paths.append(gemini_path)
     return paths
 
-def get_env_file_candidates():
-    """Returns list of candidate .env files to check for API keys."""
-    paths = []
-    custom = os.environ.get("HERMES_ENV_PATH", "").strip()
-    if custom:
-        paths.append(os.path.expanduser(custom))
-    paths.append(os.path.expanduser("~/.hermes/.env"))
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    paths.append(os.path.join(script_dir, ".env"))
-    return [p for p in paths if os.path.isfile(p)]
+def get_env_file_path():
+    """Returns single fixed path to .env file sitting next to this script."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+def parse_env_value(raw_val: str) -> str:
+    """
+    Parses a single environment variable value from .env.
+    Tolerates single/double quotes around value and trailing inline comments outside quotes.
+    """
+    raw_val = raw_val.strip()
+    if not raw_val:
+        return ""
+    quote_char = raw_val[0]
+    if quote_char in ('"', "'"):
+        val_chars = []
+        i = 1
+        n = len(raw_val)
+        closed = False
+        while i < n:
+            ch = raw_val[i]
+            if ch == '\\' and quote_char == '"' and i + 1 < n:
+                next_ch = raw_val[i + 1]
+                if next_ch in ('"', '\\', '$', '`'):
+                    val_chars.append(next_ch)
+                    i += 2
+                    continue
+                elif next_ch == 'n':
+                    val_chars.append('\n')
+                    i += 2
+                    continue
+                elif next_ch == 'r':
+                    val_chars.append('\r')
+                    i += 2
+                    continue
+                elif next_ch == 't':
+                    val_chars.append('\t')
+                    i += 2
+                    continue
+            if ch == quote_char:
+                closed = True
+                break
+            val_chars.append(ch)
+            i += 1
+        if closed:
+            return "".join(val_chars).strip()
+        else:
+            return raw_val[1:].strip()
+    else:
+        comment_idx = raw_val.find('#')
+        if comment_idx != -1:
+            raw_val = raw_val[:comment_idx]
+        return raw_val.strip()
+
+def parse_env_file(env_path):
+    """
+    Parses key-value pairs from .env using stdlib only.
+    Tolerates UTF-8 BOM, CRLF, blank lines, comments (#), optional 'export ' prefix,
+    'KEY = value' with spaces, single/double quotes around the value,
+    and trailing inline comments outside quotes.
+    Ignores malformed lines without raising.
+    Strips whitespace. Never logs or emits key values.
+    """
+    entries = {}
+    if not os.path.isfile(env_path):
+        return entries
+    try:
+        with open(env_path, "r", encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export"):
+                    rem = line[6:]
+                    if rem and rem[0].isspace():
+                        line = rem.lstrip()
+                if "=" not in line:
+                    continue
+                parts = line.split("=", 1)
+                key = parts[0].strip()
+                raw_val = parts[1].strip()
+                if not key:
+                    continue
+                val = parse_env_value(raw_val)
+                entries[key] = val
+    except Exception:
+        pass
+    return entries
+
+def get_api_key_from_env(var_name):
+    """
+    Reads a single API key from the local .env file sitting next to this script.
+    Never checks os.environ, registry, or any other directory.
+    Returns: (key_value, error_message)
+    Where key_value is a non-empty string or None.
+    """
+    env_path = get_env_file_path()
+    if not os.path.isfile(env_path):
+        return None, f"{var_name} не найдена в {env_path} (файла нет)"
+    entries = parse_env_file(env_path)
+    val = entries.get(var_name, "").strip()
+    if not val:
+        return None, f"{var_name} не найдена в {env_path} (файл есть)"
+    return val, None
 
 def format_time_diff(target_iso):
     if not target_iso:
@@ -87,30 +180,15 @@ def get_used_status_level(used_fraction):
     return "ok"
 
 def get_openrouter_api_key():
-    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if key:
-        return key
-    for env_path in get_env_file_candidates():
-        try:
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("#") or not line:
-                        continue
-                    if line.startswith("OPENROUTER_API_KEY="):
-                        val = line.split("=", 1)[1].strip().strip("\"'")
-                        if val:
-                            return val
-        except Exception:
-            pass
-    return None
+    key, _ = get_api_key_from_env("OPENROUTER_API_KEY")
+    return key
 
 def query_openrouter_quota():
-    key = get_openrouter_api_key()
+    key, err = get_api_key_from_env("OPENROUTER_API_KEY")
     if not key:
         return {
             "status": "disabled",
-            "error": "No API key found in env or ~/.hermes/.env",
+            "error": err,
             "limit": 0.0,
             "usage": 0.0,
             "limit_remaining": 0.0,
@@ -198,29 +276,14 @@ def query_openrouter_quota():
         }
 
 def get_kimi_api_key():
-    key = os.environ.get("KIMI_API_KEY", "").strip()
-    if key:
-        return key
-    for env_path in get_env_file_candidates():
-        try:
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("#") or not line:
-                        continue
-                    if line.startswith("KIMI_API_KEY="):
-                        val = line.split("=", 1)[1].strip().strip("\"'")
-                        if val:
-                            return val
-        except Exception:
-            pass
-    return None
+    key, _ = get_api_key_from_env("KIMI_API_KEY")
+    return key
 
 def query_kimi_quota():
-    key = get_kimi_api_key()
+    key, err = get_api_key_from_env("KIMI_API_KEY")
     default_res = {
         "status": "disabled",
-        "error": "No API key found in env or ~/.hermes/.env",
+        "error": err or "API key not found",
         "limit_5h": {
             "used_ratio": 0.0,
             "used_percent": 0.0,
@@ -749,9 +812,9 @@ def main():
 
     # Query OpenRouter quota and attach
     openrouter_data = query_openrouter_quota()
-    if openrouter_data.get("status") != "online" and last_cache:
+    if openrouter_data.get("status") == "error" and last_cache:
         cached_or = last_cache.get("data", {}).get("openrouter") or last_cache.get("openrouter")
-        if cached_or and cached_or.get("status") == "online":
+        if cached_or and cached_or.get("status") in ("online", "stale"):
             cached_or = dict(cached_or)
             cached_or["status"] = "stale"
             openrouter_data = cached_or
@@ -761,9 +824,9 @@ def main():
 
     # Query Kimi quota and attach
     kimi_data = query_kimi_quota()
-    if kimi_data.get("status") != "online" and last_cache:
+    if kimi_data.get("status") == "error" and last_cache:
         cached_kimi = last_cache.get("data", {}).get("kimi") or last_cache.get("kimi")
-        if cached_kimi and cached_kimi.get("status") == "online":
+        if cached_kimi and cached_kimi.get("status") in ("online", "stale"):
             cached_kimi = dict(cached_kimi)
             cached_kimi["status"] = "stale"
             kimi_data = cached_kimi
