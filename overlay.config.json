@@ -2,5 +2,6 @@
   "backend": "windows",
   "pythonPath": "",
   "wslDistro": "",
-  "timeoutSeconds": 0
+  "timeoutSeconds": 0,
+  "testHooks": false
 }

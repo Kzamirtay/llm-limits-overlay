@@ -19,12 +19,25 @@ using System.Runtime.InteropServices;
 public static class WindowStyles {
     public const int GWL_EXSTYLE = -20;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const uint WM_CLOSE = 0x0010;
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
 
     public static void SetToolWindow(IntPtr hWnd) {
         int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
@@ -89,6 +102,7 @@ function Save-OverlayConfigField($field, $value) {
                 pythonPath = ""
                 wslDistro = ""
                 timeoutSeconds = 0
+                testHooks = $false
             }
         }
         $cfg | Add-Member -MemberType NoteProperty -Name $field -Value $value -Force
@@ -304,19 +318,42 @@ function Resolve-WslFetchScript($distro) {
     Write-OverlayLog "CRITICAL AppDomain Exception: $($e.ExceptionObject)"
 })
 
+$script:processStartTime = [DateTime]::UtcNow
+
+# Clean up any stale command file from prior runs immediately on startup
+$staleActionFile = Join-Path $ScriptDir ".tray-action"
+if (Test-Path $staleActionFile) {
+    try {
+        Remove-Item -Path $staleActionFile -Force -ErrorAction SilentlyContinue
+    } catch {}
+}
+
 Write-OverlayLog "=== LLM Limits Overlay Starting (PID=$PID) ==="
 
-# Single instance enforcement: terminate older overlay instances if running
+# Single instance enforcement: terminate older overlay instances strictly from this worktree/directory
 try {
     $currentPid = $PID
     Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object {
-        $_.ProcessId -ne $currentPid -and (
-            $_.CommandLine -like "*limits_overlay.ps1*" -or
-            $_.CommandLine -like "*agy_limits_overlay.ps1*"
-        )
+        $_.ProcessId -ne $currentPid -and
+        ($_.CommandLine -like "*$ScriptDir*") -and
+        ($_.CommandLine -like "*limits_overlay.ps1*" -or $_.CommandLine -like "*agy_limits_overlay.ps1*")
     } | ForEach-Object {
-        Write-OverlayLog "Terminating prior overlay instance (PID=$($_.ProcessId))."
-        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        $priorPid = $_.ProcessId
+        Write-OverlayLog "Terminating prior overlay instance (PID=$priorPid)."
+        try {
+            $hOld = [WindowStyles]::FindWindow($null, "LLM Limits Overlay")
+            if ($hOld -ne [IntPtr]::Zero) {
+                [WindowStyles]::PostMessage($hOld, [WindowStyles]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            }
+            $priorProc = [System.Diagnostics.Process]::GetProcessById($priorPid)
+            if ($priorProc -and -not $priorProc.HasExited) {
+                if (-not $priorProc.WaitForExit(1500)) {
+                    $priorProc.Kill()
+                }
+            }
+        } catch {
+            Stop-Process -Id $priorPid -Force -ErrorAction SilentlyContinue
+        }
     }
 } catch {}
 
@@ -544,10 +581,18 @@ $Config = @{
 $reader = (New-Object System.Xml.XmlNodeReader $xaml)
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
+$iconPath = Join-Path $ScriptDir "assets/app.ico"
+if (Test-Path $iconPath) {
+    try {
+        $window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create((New-Object System.Uri($iconPath)))
+    } catch {}
+}
+
 # Set WS_EX_TOOLWINDOW when HWND is created: excludes from Alt-Tab switcher completely
 $window.Add_SourceInitialized({
     $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
     [WindowStyles]::SetToolWindow($helper.Handle)
+    Write-OverlayLog "Window HWND=$($helper.Handle) initialized."
 })
 
 # Position at bottom right corner (WorkingArea accounts for taskbar so overlay does not overlap it)
@@ -591,6 +636,11 @@ Update-OverlayPosition
 
 $window.Add_ContentRendered({
     Update-OverlayPosition
+    try {
+        $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $vis = [WindowStyles]::IsWindowVisible($h)
+        Write-OverlayLog "Window rendered and visible (HWND=$h, IsWindowVisible=$vis, Left=$($window.Left), Top=$($window.Top))."
+    } catch {}
 })
 
 $window.Add_SizeChanged({
@@ -707,6 +757,10 @@ function Update-MenuBackendSelection {
     if ($menuBackendAuto) { $menuBackendAuto.IsChecked = ($current -eq "auto") }
     if ($menuBackendWindows) { $menuBackendWindows.IsChecked = ($current -eq "windows") }
     if ($menuBackendWsl) { $menuBackendWsl.IsChecked = ($current -eq "wsl") }
+
+    if ($script:trayMenuBackendAuto) { $script:trayMenuBackendAuto.Checked = ($current -eq "auto") }
+    if ($script:trayMenuBackendWindows) { $script:trayMenuBackendWindows.Checked = ($current -eq "windows") }
+    if ($script:trayMenuBackendWsl) { $script:trayMenuBackendWsl.Checked = ($current -eq "wsl") }
 }
 
 function Set-BackendFromMenu($newBackend) {
@@ -749,13 +803,368 @@ if ($window.ContextMenu) {
         Update-MenuBackendSelection
     })
 }
-Update-MenuBackendSelection
 
 if ($menuClose) {
     $menuClose.Add_Click({
         Write-OverlayLog "User clicked 'Закрыть'. Exiting."
+        Cleanup-TrayIcon
         $window.Close()
     })
+}
+
+# ==============================================================================
+# SYSTEM TRAY NOTIFYICON & CONTEXTMENUSTRIP CONFIGURATION
+# ==============================================================================
+$script:trayIconObj = $null
+if (Test-Path $iconPath) {
+    try {
+        $script:trayIconObj = New-Object System.Drawing.Icon($iconPath)
+    } catch {
+        Write-OverlayLog "Error loading icon from ${iconPath}: $_"
+    }
+}
+if ($null -eq $script:trayIconObj) {
+    $script:trayIconObj = [System.Drawing.SystemIcons]::Application
+}
+
+$script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
+$script:trayIcon.Icon = $script:trayIconObj
+$script:trayIcon.Text = "LLM Limits Overlay"
+$script:trayIcon.Visible = $true
+Write-OverlayLog "Tray icon created successfully (asset: $iconPath, visible: $($script:trayIcon.Visible))."
+
+function Cleanup-TrayIcon {
+    try {
+        if ($null -ne $script:trayIcon) {
+            $script:trayIcon.Visible = $false
+            $script:trayIcon.Dispose()
+            $script:trayIcon = $null
+            Write-OverlayLog "Tray icon cleaned up and disposed."
+        }
+        if ($null -ne $script:trayIconObj) {
+            $script:trayIconObj.Dispose()
+            $script:trayIconObj = $null
+        }
+    } catch {}
+}
+
+$window.Add_Closed({
+    Cleanup-TrayIcon
+    try {
+        [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown()
+    } catch {}
+})
+
+[System.AppDomain]::CurrentDomain.add_ProcessExit({
+    Cleanup-TrayIcon
+})
+
+function Exit-Overlay {
+    Write-OverlayLog "Tray action: 'Выход' clicked. Exiting."
+    Cleanup-TrayIcon
+    try {
+        $window.Close()
+    } catch {}
+    try {
+        [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown()
+    } catch {}
+    [System.Environment]::Exit(0)
+}
+
+function Reset-OverlayPosition {
+    Write-OverlayLog "Tray action: 'Сбросить позицию' clicked."
+    $script:isUserPositioned = $false
+    Update-OverlayPosition
+}
+
+$script:lastTrayToggleTime = [DateTime]::MinValue
+
+function Toggle-OverlayVisibility {
+    $now = [DateTime]::UtcNow
+    if (($now - $script:lastTrayToggleTime).TotalMilliseconds -lt 400) {
+        return
+    }
+    $script:lastTrayToggleTime = $now
+
+    $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+    if ($window.Visibility -eq [System.Windows.Visibility]::Visible) {
+        $window.Visibility = [System.Windows.Visibility]::Hidden
+        $vis = [WindowStyles]::IsWindowVisible($h)
+        Write-OverlayLog "Tray action: Hiding overlay window (WPF Visibility=Hidden, Win32 IsWindowVisible=$vis)."
+        if ($script:trayMenuToggle) { $script:trayMenuToggle.Text = "Показать оверлей" }
+    } else {
+        $window.Visibility = [System.Windows.Visibility]::Visible
+        $window.Activate()
+        $vis = [WindowStyles]::IsWindowVisible($h)
+        Write-OverlayLog "Tray action: Showing overlay window (WPF Visibility=Visible, Win32 IsWindowVisible=$vis)."
+        if ($script:trayMenuToggle) { $script:trayMenuToggle.Text = "Скрыть оверлей" }
+    }
+}
+
+function Capture-OverlayWindow($destPath = $null) {
+    if ([string]::IsNullOrWhiteSpace($destPath)) {
+        $destPath = Join-Path $ScriptDir "docs\screenshots\overlay_window.png"
+    }
+    try {
+        $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $w = [int]$window.ActualWidth
+        $hgt = [int]$window.ActualHeight
+        if ($w -le 0) { $w = 290 }
+        if ($hgt -le 0) { $hgt = 500 }
+
+        $bmp = New-Object System.Drawing.Bitmap($w, $hgt, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $hdc = $g.GetHdc()
+        [WindowStyles]::PrintWindow($h, $hdc, 2) | Out-Null
+        $g.ReleaseHdc($hdc)
+        $g.Dispose()
+
+        $dir = Split-Path -Parent $destPath
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $bmp.Save($destPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp.Dispose()
+        Write-OverlayLog "Captured overlay window via PrintWindow (PW_RENDERFULLCONTENT=2) to $destPath"
+    } catch {
+        Write-OverlayLog "Error capturing overlay window: $_"
+    }
+}
+
+function Set-TrayTooltip($text) {
+    if ($null -eq $script:trayIcon) { return }
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        $text = "LLM Limits Overlay"
+    }
+    $text = $text.Trim()
+    if ($text.Length -gt 63) {
+        $text = $text.Substring(0, 60) + "..."
+    }
+    try {
+        $script:trayIcon.Text = $text
+    } catch {
+        try {
+            $script:trayIcon.Text = "LLM Limits Overlay"
+        } catch {}
+    }
+}
+
+function Update-TrayTooltipFromData($jsonObj) {
+    if ($null -eq $script:trayIcon) { return }
+    if ($null -eq $jsonObj) {
+        Set-TrayTooltip "LLM Limits Overlay"
+        return
+    }
+
+    $data = $jsonObj.data
+    $summaryParts = @()
+
+    $kimiData = if ($data.kimi) { $data.kimi } else { $jsonObj.kimi }
+    if ($kimiData) {
+        if ($kimiData.limit_7d -and $null -ne $kimiData.limit_7d.used_percent) {
+            $kp = [int][math]::Round([double]$kimiData.limit_7d.used_percent)
+            $summaryParts += "Kimi 7д $kp%"
+        } elseif ($kimiData.limit_5h -and $null -ne $kimiData.limit_5h.used_percent) {
+            $kp = [int][math]::Round([double]$kimiData.limit_5h.used_percent)
+            $summaryParts += "Kimi 5ч $kp%"
+        }
+    }
+
+    if ($data.gemini_5h) {
+        $gu = Get-UsedInfo $data.gemini_5h
+        $gp = [int][math]::Round($gu.Percent)
+        $summaryParts += "Gemini $gp%"
+    } elseif ($data.gemini_weekly) {
+        $gu = Get-UsedInfo $data.gemini_weekly
+        $gp = [int][math]::Round($gu.Percent)
+        $summaryParts += "Gemini $gp%"
+    }
+
+    if ($data.claude_5h) {
+        $cu = Get-UsedInfo $data.claude_5h
+        $cp = [int][math]::Round($cu.Percent)
+        $summaryParts += "Claude $cp%"
+    } elseif ($data.claude_weekly) {
+        $cu = Get-UsedInfo $data.claude_weekly
+        $cp = [int][math]::Round($cu.Percent)
+        $summaryParts += "Claude $cp%"
+    }
+
+    $tipText = if ($summaryParts.Count -gt 0) {
+        $summaryParts -join " · "
+    } else {
+        "LLM Limits Overlay"
+    }
+
+    Set-TrayTooltip $tipText
+}
+
+# WinForms Tray ContextMenuStrip
+$trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
+
+$script:trayMenuToggle = New-Object System.Windows.Forms.ToolStripMenuItem("Скрыть оверлей")
+$script:trayMenuToggle.Add_Click({
+    Toggle-OverlayVisibility
+})
+$trayMenu.Items.Add($script:trayMenuToggle) | Out-Null
+
+$trayMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
+
+$script:trayMenuRefresh = New-Object System.Windows.Forms.ToolStripMenuItem("Обновить квоты")
+$script:trayMenuRefresh.Add_Click({
+    Write-OverlayLog "Tray menu: 'Обновить квоты' clicked."
+    Start-AsyncRefresh
+})
+$trayMenu.Items.Add($script:trayMenuRefresh) | Out-Null
+
+$script:trayMenuEnv = New-Object System.Windows.Forms.ToolStripMenuItem("Окружение")
+
+$script:trayMenuBackendAuto = New-Object System.Windows.Forms.ToolStripMenuItem("Авто")
+$script:trayMenuBackendAuto.CheckOnClick = $false
+$script:trayMenuBackendAuto.Add_Click({
+    Set-BackendFromMenu "auto"
+})
+$script:trayMenuEnv.DropDownItems.Add($script:trayMenuBackendAuto) | Out-Null
+
+$script:trayMenuBackendWindows = New-Object System.Windows.Forms.ToolStripMenuItem("Windows (нативный Python)")
+$script:trayMenuBackendWindows.CheckOnClick = $false
+$script:trayMenuBackendWindows.Add_Click({
+    Set-BackendFromMenu "windows"
+})
+$script:trayMenuEnv.DropDownItems.Add($script:trayMenuBackendWindows) | Out-Null
+
+$script:trayMenuBackendWsl = New-Object System.Windows.Forms.ToolStripMenuItem("WSL")
+$script:trayMenuBackendWsl.CheckOnClick = $false
+$script:trayMenuBackendWsl.Add_Click({
+    Set-BackendFromMenu "wsl"
+})
+$script:trayMenuEnv.DropDownItems.Add($script:trayMenuBackendWsl) | Out-Null
+
+$trayMenu.Items.Add($script:trayMenuEnv) | Out-Null
+
+$trayMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
+
+$script:trayMenuResetPos = New-Object System.Windows.Forms.ToolStripMenuItem("Сбросить позицию")
+$script:trayMenuResetPos.Add_Click({
+    Reset-OverlayPosition
+})
+$trayMenu.Items.Add($script:trayMenuResetPos) | Out-Null
+
+$script:trayMenuExit = New-Object System.Windows.Forms.ToolStripMenuItem("Выход")
+$script:trayMenuExit.Add_Click({
+    Exit-Overlay
+})
+$trayMenu.Items.Add($script:trayMenuExit) | Out-Null
+
+$trayMenu.Add_Opening({
+    param($s, $e)
+    if ($window.Visibility -eq [System.Windows.Visibility]::Visible) {
+        $script:trayMenuToggle.Text = "Скрыть оверлей"
+    } else {
+        $script:trayMenuToggle.Text = "Показать оверлей"
+    }
+    if ($script:trayMenuRefresh) {
+        $script:trayMenuRefresh.Enabled = (-not $script:isFetching)
+    }
+    Update-MenuBackendSelection
+})
+
+$script:trayIcon.ContextMenuStrip = $trayMenu
+
+$script:trayIcon.Add_MouseClick({
+    param($s, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        Toggle-OverlayVisibility
+    }
+})
+
+$script:trayIcon.Add_DoubleClick({
+    Toggle-OverlayVisibility
+})
+
+Update-MenuBackendSelection
+
+# Programmatic Tray Action Dispatcher (.tray-action file queue)
+# Hard-disabled by default; activates ONLY when "testHooks": true in overlay.config.json
+$cfg = Get-OverlayConfig
+$script:testHooksEnabled = ($cfg -and $cfg.testHooks -eq $true)
+
+if ($script:testHooksEnabled) {
+    Write-OverlayLog "Test hooks enabled via overlay.config.json (testHooks=true)."
+    $actionFile = Join-Path $ScriptDir ".tray-action"
+    $actionTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $actionTimer.Interval = [TimeSpan]::FromMilliseconds(200)
+    $actionTimer.Add_Tick({
+        if (Test-Path $actionFile) {
+            try {
+                $fi = Get-Item -Path $actionFile -ErrorAction SilentlyContinue
+                if ($null -eq $fi) { return }
+
+                # Stale check 1: file mtime must be newer than process start time
+                if ($fi.LastWriteTimeUtc -le $script:processStartTime) {
+                    Remove-Item -Path $actionFile -Force -ErrorAction SilentlyContinue
+                    Write-OverlayLog "Ignored stale .tray-action command file (mtime $($fi.LastWriteTimeUtc) <= process start $($script:processStartTime))."
+                    return
+                }
+
+                $cmd = (Get-Content -Path $actionFile -Raw -ErrorAction SilentlyContinue).Trim()
+                Remove-Item -Path $actionFile -Force -ErrorAction SilentlyContinue
+                if (-not [string]::IsNullOrWhiteSpace($cmd)) {
+                    # Startup grace period: exit / hide commands are ignored during the first 5 seconds
+                    $procAgeSec = ([DateTime]::UtcNow - $script:processStartTime).TotalSeconds
+                    if ($procAgeSec -lt 5.0 -and ($cmd -match "^(exit|toggle|toggle-visibility|hide)$")) {
+                        Write-OverlayLog "Ignored '$cmd' from .tray-action during startup grace period (${procAgeSec}s < 5.0s)."
+                        return
+                    }
+
+                    switch -Regex ($cmd) {
+                        "^(toggle|toggle-visibility)$" {
+                            Toggle-OverlayVisibility
+                        }
+                        "^show$" {
+                            if ($window.Visibility -ne [System.Windows.Visibility]::Visible) {
+                                Toggle-OverlayVisibility
+                            }
+                        }
+                        "^hide$" {
+                            if ($window.Visibility -eq [System.Windows.Visibility]::Visible) {
+                                Toggle-OverlayVisibility
+                            }
+                        }
+                        "^refresh$" {
+                            if ($script:trayMenuRefresh -and $script:trayMenuRefresh.Enabled) {
+                                Write-OverlayLog "Tray menu: 'Обновить квоты' clicked."
+                                Start-AsyncRefresh
+                            }
+                        }
+                        "^backend:(.+)$" {
+                            $b = $Matches[1].ToLower().Trim()
+                            if ($b -in @("auto", "windows", "wsl")) {
+                                Set-BackendFromMenu $b
+                            }
+                        }
+                        "^reset-pos$" {
+                            Reset-OverlayPosition
+                        }
+                        "^capture(?::(.+))?$" {
+                            $p = if ($Matches[1]) { $Matches[1].Trim() } else { $null }
+                            Capture-OverlayWindow $p
+                        }
+                        "^status$" {
+                            $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+                            $v = [WindowStyles]::IsWindowVisible($h)
+                            $b = (Resolve-OverlayBackend).Backend
+                            Write-OverlayLog "Status query: Visibility=$($window.Visibility), Win32 IsWindowVisible=$v, Backend=$b, Left=$($window.Left), Top=$($window.Top)"
+                        }
+                        "^exit$" {
+                            Exit-Overlay
+                        }
+                    }
+                }
+            } catch {}
+        }
+    })
+    $actionTimer.Start()
+} else {
+    Write-OverlayLog "Test hooks disabled (testHooks=false in config). Command file .tray-action will not be monitored."
 }
 
 # ==============================================================================
@@ -1086,6 +1495,9 @@ function Update-UIWithData($jsonObj) {
         $window.UpdateLayout()
         Update-OverlayPosition
     } catch {}
+
+    # Update tray tooltip with single-line summary
+    Update-TrayTooltipFromData $jsonObj
 }
 
 function Load-CacheFromDisk($statusOverride = $null) {
@@ -1112,6 +1524,7 @@ function Load-CacheFromDisk($statusOverride = $null) {
     if (-not $loaded -and $null -ne $statusOverride) {
         $script:lastIsStale = $true
         Update-HeaderRelativeTime
+        Set-TrayTooltip "LLM Limits Overlay"
         Write-OverlayLog "No cache file found; marked stale ($statusOverride)."
     }
 }
@@ -1132,6 +1545,7 @@ $watchdogTimer.Add_Tick({
         $watchdogTimer.Stop()
         $script:isFetching = $false
         if ($menuRefresh) { $menuRefresh.IsEnabled = $true }
+        if ($script:trayMenuRefresh) { $script:trayMenuRefresh.Enabled = $true }
         return
     }
 
@@ -1144,6 +1558,7 @@ $watchdogTimer.Add_Tick({
         $script:fetchProc = $null
         $script:isFetching = $false
         if ($menuRefresh) { $menuRefresh.IsEnabled = $true }
+        if ($script:trayMenuRefresh) { $script:trayMenuRefresh.Enabled = $true }
 
         Write-OverlayLog "Async refresh process finished (PID=$procId, exitCode=$exitCode)."
         if ($exitCode -eq 0) {
@@ -1165,6 +1580,7 @@ $watchdogTimer.Add_Tick({
         $script:fetchProc = $null
         $script:isFetching = $false
         if ($menuRefresh) { $menuRefresh.IsEnabled = $true }
+        if ($script:trayMenuRefresh) { $script:trayMenuRefresh.Enabled = $true }
 
         Write-OverlayLog "Async refresh timed out after $($script:currentTimeoutMs)ms (PID=$procId). Process killed."
         Load-CacheFromDisk "stale (timeout)"
@@ -1252,6 +1668,7 @@ function Start-AsyncRefresh {
 
     $script:isFetching = $true
     if ($menuRefresh) { $menuRefresh.IsEnabled = $false }
+    if ($script:trayMenuRefresh) { $script:trayMenuRefresh.Enabled = $false }
     if ($null -ne $txtUpdated) {
         $txtUpdated.Text = "обновление..."
         $converter = New-Object System.Windows.Media.BrushConverter
@@ -1299,6 +1716,7 @@ function Start-AsyncRefresh {
     } catch {
         $script:isFetching = $false
         if ($menuRefresh) { $menuRefresh.IsEnabled = $true }
+        if ($script:trayMenuRefresh) { $script:trayMenuRefresh.Enabled = $true }
         Write-OverlayLog "Exception starting refresh process: $_"
         $errReason = if ($targetIsWsl) { "WSL unavailable" } else { "Python unavailable" }
         if ($txtUpdated) {
@@ -1322,6 +1740,11 @@ $clockTimer.Start()
 $mainTimer = New-Object System.Windows.Threading.DispatcherTimer
 $mainTimer.Interval = [TimeSpan]::FromSeconds(60)
 $mainTimer.Add_Tick({
+    try {
+        $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+        $vis = [WindowStyles]::IsWindowVisible($h)
+        Write-OverlayLog "Periodic watchdog tick (HWND=$h, IsWindowVisible=$vis)."
+    } catch {}
     Start-AsyncRefresh
 })
 $mainTimer.Start()
@@ -1457,9 +1880,15 @@ if ($args -contains "-ScreenshotAndExit") {
     $bmpLight.Dispose()
     $lightWindow.Close()
 
+    Cleanup-TrayIcon
     $window.Close()
     try { [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown() } catch {}
     Stop-Process -Id $PID -Force
 }
 
-[void]$window.ShowDialog()
+$window.Show()
+try {
+    [System.Windows.Threading.Dispatcher]::Run()
+} finally {
+    Cleanup-TrayIcon
+}

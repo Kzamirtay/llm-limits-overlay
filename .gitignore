@@ -2,6 +2,7 @@
 limits.json
 limits.json.tmp
 overlay.log
+.tray-action
 .env
 *.env
 
