@@ -208,6 +208,7 @@ llm-limits-overlay/
 ├── run_overlay.vbs              # Бесшумный лончер без окон консоли
 ├── run_overlay.bat              # Батник быстрого запуска (вызывает VBS)
 ├── overlay.config.json          # Конфигурация бэкенда и путей (создается автоматически)
+├── .env.example                 # Шаблон конфигурации API-ключей (OpenRouter, Kimi)
 ├── .gitignore                   # Исключение кэшей, логов и локальных файлов
 ├── LICENSE                      # Лицензия MIT
 └── README.md                    # Документация проекта
