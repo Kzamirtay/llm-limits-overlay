@@ -11,15 +11,21 @@
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing, System.Windows.Forms
 
-# Win32 Helper for WS_EX_TOOLWINDOW (excludes window from Alt-Tab switcher without breaking AllowsTransparency)
-Add-Type -TypeDefinition @"
+# Win32 Helper for WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, and Global Hotkey Hook
+Add-Type -ReferencedAssemblies @("WindowsBase", "PresentationCore", "PresentationFramework") -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Windows.Interop;
 
 public static class WindowStyles {
     public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TRANSPARENT = 0x00000020;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const int WS_EX_LAYERED = 0x00080000;
     public const uint WM_CLOSE = 0x0010;
+    public const int WM_HOTKEY = 0x0312;
+    public const int HOTKEY_ID = 9001;
+    public const uint MOD_NOREPEAT = 0x4000;
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -39,9 +45,88 @@ public static class WindowStyles {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
     public static void SetToolWindow(IntPtr hWnd) {
         int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
         SetWindowLong(hWnd, GWL_EXSTYLE, exStyle | WS_EX_TOOLWINDOW);
+    }
+
+    public static int GetWindowExStyle(IntPtr hWnd) {
+        return GetWindowLong(hWnd, GWL_EXSTYLE);
+    }
+
+    public static void SetClickThrough(IntPtr hWnd, bool enable) {
+        int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+        if (enable) {
+            SetWindowLong(hWnd, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT);
+        } else {
+            SetWindowLong(hWnd, GWL_EXSTYLE, exStyle & ~WS_EX_TRANSPARENT);
+        }
+    }
+
+    private static Action hotkeyCallback;
+    private static HwndSourceHook hotkeyHookDelegate;
+    private static HwndSource attachedSource;
+    private static IntPtr hotkeyHwnd = IntPtr.Zero;
+    private static bool isHotkeyRegistered = false;
+
+    public static IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) {
+        if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID) {
+            handled = true;
+            if (hotkeyCallback != null) {
+                try {
+                    hotkeyCallback.Invoke();
+                } catch {}
+            }
+        }
+        return IntPtr.Zero;
+    }
+
+    public static bool RegisterGlobalHotkey(IntPtr hWnd, uint modifiers, uint vk, Action callback) {
+        UnregisterGlobalHotkey();
+        hotkeyCallback = callback;
+        hotkeyHwnd = hWnd;
+
+        try {
+            attachedSource = HwndSource.FromHwnd(hWnd);
+            if (attachedSource != null) {
+                hotkeyHookDelegate = new HwndSourceHook(HwndHook);
+                attachedSource.AddHook(hotkeyHookDelegate);
+            }
+        } catch {}
+
+        bool ok = RegisterHotKey(hWnd, HOTKEY_ID, modifiers | MOD_NOREPEAT, vk);
+        if (!ok) {
+            ok = RegisterHotKey(hWnd, HOTKEY_ID, modifiers, vk);
+        }
+        isHotkeyRegistered = ok;
+        return ok;
+    }
+
+    public static void UnregisterGlobalHotkey() {
+        if (isHotkeyRegistered && hotkeyHwnd != IntPtr.Zero) {
+            try {
+                UnregisterHotKey(hotkeyHwnd, HOTKEY_ID);
+            } catch {}
+            isHotkeyRegistered = false;
+        }
+        hotkeyHwnd = IntPtr.Zero;
+        if (attachedSource != null && hotkeyHookDelegate != null) {
+            try {
+                attachedSource.RemoveHook(hotkeyHookDelegate);
+            } catch {}
+            attachedSource = null;
+            hotkeyHookDelegate = null;
+        }
+        hotkeyCallback = null;
     }
 }
 "@
@@ -103,6 +188,8 @@ function Save-OverlayConfigField($field, $value) {
                 wslDistro = ""
                 timeoutSeconds = 0
                 testHooks = $false
+                clickThrough = $false
+                clickThroughHotkey = "Ctrl+Alt+L"
             }
         }
         $cfg | Add-Member -MemberType NoteProperty -Name $field -Value $value -Force
@@ -111,6 +198,158 @@ function Save-OverlayConfigField($field, $value) {
     } catch {
         Write-OverlayLog "Error saving config ($field=$value): $_"
     }
+}
+
+# ------------------------------------------------------------------------------
+# Click-Through Mode State & Hotkey Support
+# ------------------------------------------------------------------------------
+$script:overlayConfig = Get-OverlayConfig
+$script:clickThrough = $false
+$script:clickThroughHotkey = "Ctrl+Alt+L"
+if ($script:overlayConfig) {
+    if ($null -ne $script:overlayConfig.clickThrough) {
+        $script:clickThrough = [bool]$script:overlayConfig.clickThrough
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:overlayConfig.clickThroughHotkey)) {
+        $script:clickThroughHotkey = $script:overlayConfig.clickThroughHotkey.Trim()
+    }
+}
+
+function Parse-HotkeyString([string]$hotkeyStr) {
+    if ([string]::IsNullOrWhiteSpace($hotkeyStr)) {
+        return $null
+    }
+
+    $mod = 0
+    $vk = 0
+    $parts = $hotkeyStr.Split("+") | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 }
+
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $p = $parts[$i]
+        switch -Regex ($p) {
+            "^(ctrl|control)$" { $mod = $mod -bor 0x0002; continue }
+            "^(alt|menu)$"     { $mod = $mod -bor 0x0001; continue }
+            "^shift$"          { $mod = $mod -bor 0x0004; continue }
+            "^(win|windows)$"  { $mod = $mod -bor 0x0008; continue }
+            default {
+                if ($i -eq ($parts.Count - 1)) {
+                    if ($p.Length -eq 1) {
+                        $ch = [char]::ToUpper($p[0])
+                        if (($ch -ge 'A' -and $ch -le 'Z') -or ($ch -ge '0' -and $ch -le '9')) {
+                            $vk = [int]$ch
+                        }
+                    } elseif ($p -match "^F([1-9]|1[0-9]|2[0-4])$") {
+                        $fNum = [int]$Matches[1]
+                        $vk = 0x70 + ($fNum - 1)
+                    } else {
+                        try {
+                            $keyEnum = [System.Windows.Forms.Keys]::None
+                            if ([System.Enum]::TryParse([System.Windows.Forms.Keys], $p, $true, [ref]$keyEnum)) {
+                                $vk = [int]$keyEnum
+                            }
+                        } catch {}
+                    }
+                }
+            }
+        }
+    }
+
+    if ($vk -eq 0) {
+        return $null
+    }
+
+    return @{
+        Modifiers = [uint32]$mod
+        VirtualKey = [uint32]$vk
+        Display = ($parts -join "+")
+    }
+}
+
+function Apply-ClickThroughState($enable) {
+    try {
+        $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
+        $h = $helper.Handle
+        if ($h -ne [IntPtr]::Zero) {
+            [WindowStyles]::SetClickThrough($h, [bool]$enable)
+            $curEx = [WindowStyles]::GetWindowExStyle($h)
+            Write-OverlayLog ("Applied click-through={0} to HWND={1} (GWL_EXSTYLE=0x{2:X8})." -f [bool]$enable, $h, $curEx)
+        }
+    } catch {
+        Write-OverlayLog "Error applying click-through style: $_"
+    }
+}
+
+function Show-ClickThroughNotification {
+    try {
+        if ($null -ne $script:trayIcon -and $script:trayIcon.Visible) {
+            $hkText = if ($script:clickThroughHotkey) { $script:clickThroughHotkey } else { "Ctrl+Alt+L" }
+            $title = "LLM Limits Overlay"
+            $msg = if ($script:clickThrough) {
+                "Режим «клики насквозь» включен.`nОкно прозрачно для мыши.`nВозврат: трей или $hkText."
+            } else {
+                "Режим «клики насквозь» выключен.`nОкно снова интерактивно."
+            }
+            $script:trayIcon.ShowBalloonTip(2000, $title, $msg, [System.Windows.Forms.ToolTipIcon]::Info)
+        }
+    } catch {
+        Write-OverlayLog "Error displaying tray notification: $_"
+    }
+    try {
+        Update-TrayTooltipFromData $script:lastLoadedData
+    } catch {}
+}
+
+function Set-ClickThroughState($enable, $source = "user") {
+    $enable = [bool]$enable
+    $script:clickThrough = $enable
+    Apply-ClickThroughState $enable
+    Save-OverlayConfigField "clickThrough" $enable
+    Write-OverlayLog "Click-through mode set to $enable via $source."
+
+    if ($script:trayMenuClickThrough) {
+        $script:trayMenuClickThrough.Checked = $enable
+    }
+
+    Show-ClickThroughNotification
+}
+
+function Toggle-ClickThrough($source = "user") {
+    $newState = -not $script:clickThrough
+    Set-ClickThroughState $newState $source
+}
+
+function Register-OverlayHotkey($hWnd) {
+    if ([string]::IsNullOrWhiteSpace($script:clickThroughHotkey)) {
+        Write-OverlayLog "Click-through hotkey is disabled (clickThroughHotkey is empty)."
+        return
+    }
+
+    $parsed = Parse-HotkeyString $script:clickThroughHotkey
+    if ($null -eq $parsed) {
+        Write-OverlayLog "Failed to parse clickThroughHotkey '$script:clickThroughHotkey'. Hotkey not registered."
+        return
+    }
+
+    try {
+        $ok = [WindowStyles]::RegisterGlobalHotkey($hWnd, $parsed.Modifiers, $parsed.VirtualKey, [System.Action]{
+            Toggle-ClickThrough "hotkey"
+        })
+        if ($ok) {
+            Write-OverlayLog "Registered global hotkey '$($parsed.Display)' (Modifiers=0x$([string]::Format('{0:X}', $parsed.Modifiers)), VK=0x$([string]::Format('{0:X}', $parsed.VirtualKey))) for click-through toggle."
+        } else {
+            $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-OverlayLog "Failed to register global hotkey '$($parsed.Display)' (Win32 error: $err). Hotkey may conflict with another application."
+        }
+    } catch {
+        Write-OverlayLog "Exception registering global hotkey: $_"
+    }
+}
+
+function Unregister-OverlayHotkey {
+    try {
+        [WindowStyles]::UnregisterGlobalHotkey()
+        Write-OverlayLog "Unregistered global hotkey."
+    } catch {}
 }
 
 function Resolve-OverlayBackend {
@@ -341,7 +580,21 @@ try {
         $priorPid = $_.ProcessId
         Write-OverlayLog "Terminating prior overlay instance (PID=$priorPid)."
         try {
-            $hOld = [WindowStyles]::FindWindow($null, "LLM Limits Overlay")
+            $hOld = [IntPtr]::Zero
+            try {
+                $p = [System.Diagnostics.Process]::GetProcessById($priorPid)
+                if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
+                    $hOld = $p.MainWindowHandle
+                }
+            } catch {}
+            if ($hOld -eq [IntPtr]::Zero) {
+                $cand = [WindowStyles]::FindWindow($null, "LLM Limits Overlay")
+                if ($cand -ne [IntPtr]::Zero) {
+                    $candPid = 0
+                    [WindowStyles]::GetWindowThreadProcessId($cand, [ref]$candPid) | Out-Null
+                    if ($candPid -eq $priorPid) { $hOld = $cand }
+                }
+            }
             if ($hOld -ne [IntPtr]::Zero) {
                 [WindowStyles]::PostMessage($hOld, [WindowStyles]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
             }
@@ -593,6 +846,16 @@ $window.Add_SourceInitialized({
     $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
     [WindowStyles]::SetToolWindow($helper.Handle)
     Write-OverlayLog "Window HWND=$($helper.Handle) initialized."
+
+    # Apply initial click-through state before window is shown
+    if ($script:clickThrough) {
+        [WindowStyles]::SetClickThrough($helper.Handle, $true)
+        $initEx = [WindowStyles]::GetWindowExStyle($helper.Handle)
+        Write-OverlayLog ("Initial click-through enabled before show (HWND={0}, GWL_EXSTYLE=0x{1:X8})." -f $helper.Handle, $initEx)
+    }
+
+    # Register global hotkey
+    Register-OverlayHotkey $helper.Handle
 })
 
 # Position at bottom right corner (WorkingArea accounts for taskbar so overlay does not overlap it)
@@ -835,6 +1098,9 @@ Write-OverlayLog "Tray icon created successfully (asset: $iconPath, visible: $($
 
 function Cleanup-TrayIcon {
     try {
+        Unregister-OverlayHotkey
+    } catch {}
+    try {
         if ($null -ne $script:trayIcon) {
             $script:trayIcon.Visible = $false
             $script:trayIcon.Dispose()
@@ -950,7 +1216,9 @@ function Set-TrayTooltip($text) {
 function Update-TrayTooltipFromData($jsonObj) {
     if ($null -eq $script:trayIcon) { return }
     if ($null -eq $jsonObj) {
-        Set-TrayTooltip "LLM Limits Overlay"
+        $defText = "LLM Limits Overlay"
+        if ($script:clickThrough) { $defText = "$defText [сквозь]" }
+        Set-TrayTooltip $defText
         return
     }
 
@@ -992,6 +1260,10 @@ function Update-TrayTooltipFromData($jsonObj) {
         $summaryParts -join " · "
     } else {
         "LLM Limits Overlay"
+    }
+
+    if ($script:clickThrough) {
+        $tipText = "$tipText [сквозь]"
     }
 
     Set-TrayTooltip $tipText
@@ -1040,6 +1312,14 @@ $script:trayMenuEnv.DropDownItems.Add($script:trayMenuBackendWsl) | Out-Null
 
 $trayMenu.Items.Add($script:trayMenuEnv) | Out-Null
 
+$script:trayMenuClickThrough = New-Object System.Windows.Forms.ToolStripMenuItem("Клики насквозь")
+$script:trayMenuClickThrough.CheckOnClick = $false
+$script:trayMenuClickThrough.Checked = [bool]$script:clickThrough
+$script:trayMenuClickThrough.Add_Click({
+    Toggle-ClickThrough "tray"
+})
+$trayMenu.Items.Add($script:trayMenuClickThrough) | Out-Null
+
 $trayMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
 
 $script:trayMenuResetPos = New-Object System.Windows.Forms.ToolStripMenuItem("Сбросить позицию")
@@ -1065,6 +1345,9 @@ $trayMenu.Add_Opening({
         $script:trayMenuRefresh.Enabled = (-not $script:isFetching)
     }
     Update-MenuBackendSelection
+    if ($script:trayMenuClickThrough) {
+        $script:trayMenuClickThrough.Checked = [bool]$script:clickThrough
+    }
 })
 
 $script:trayIcon.ContextMenuStrip = $trayMenu
@@ -1129,6 +1412,13 @@ if ($script:testHooksEnabled) {
                                 Toggle-OverlayVisibility
                             }
                         }
+                        "^(toggle-click-through|click-through)$" {
+                            Toggle-ClickThrough "testHook"
+                        }
+                        "^click-through:(true|false|1|0|on|off)$" {
+                            $targetState = ($Matches[1] -match "^(true|1|on)$")
+                            Set-ClickThroughState $targetState "testHook"
+                        }
                         "^refresh$" {
                             if ($script:trayMenuRefresh -and $script:trayMenuRefresh.Enabled) {
                                 Write-OverlayLog "Tray menu: 'Обновить квоты' clicked."
@@ -1151,8 +1441,9 @@ if ($script:testHooksEnabled) {
                         "^status$" {
                             $h = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
                             $v = [WindowStyles]::IsWindowVisible($h)
+                            $ex = [WindowStyles]::GetWindowExStyle($h)
                             $b = (Resolve-OverlayBackend).Backend
-                            Write-OverlayLog "Status query: Visibility=$($window.Visibility), Win32 IsWindowVisible=$v, Backend=$b, Left=$($window.Left), Top=$($window.Top)"
+                            Write-OverlayLog ("Status query: Visibility={0}, Win32 IsWindowVisible={1}, GWL_EXSTYLE=0x{2:X8}, ClickThrough={3}, Backend={4}, Left={5}, Top={6}" -f $window.Visibility, $v, $ex, $script:clickThrough, $b, $window.Left, $window.Top)
                         }
                         "^exit$" {
                             Exit-Overlay
@@ -1495,6 +1786,8 @@ function Update-UIWithData($jsonObj) {
         $window.UpdateLayout()
         Update-OverlayPosition
     } catch {}
+
+    $script:lastLoadedData = $jsonObj
 
     # Update tray tooltip with single-line summary
     Update-TrayTooltipFromData $jsonObj
