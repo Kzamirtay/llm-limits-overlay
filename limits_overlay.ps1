@@ -188,7 +188,7 @@ function Save-OverlayConfigField($field, $value) {
                 wslDistro = ""
                 timeoutSeconds = 0
                 testHooks = $false
-                clickThrough = $false
+                clickThrough = $true
                 clickThroughHotkey = "Ctrl+Alt+L"
             }
         }
@@ -204,7 +204,7 @@ function Save-OverlayConfigField($field, $value) {
 # Click-Through Mode State & Hotkey Support
 # ------------------------------------------------------------------------------
 $script:overlayConfig = Get-OverlayConfig
-$script:clickThrough = $false
+$script:clickThrough = $true
 $script:clickThroughHotkey = "Ctrl+Alt+L"
 if ($script:overlayConfig) {
     if ($null -ne $script:overlayConfig.clickThrough) {
@@ -851,7 +851,12 @@ $window.Add_SourceInitialized({
     if ($script:clickThrough) {
         [WindowStyles]::SetClickThrough($helper.Handle, $true)
         $initEx = [WindowStyles]::GetWindowExStyle($helper.Handle)
+        $cfgVal = if ($script:overlayConfig -and $null -ne $script:overlayConfig.clickThrough) { [bool]$script:overlayConfig.clickThrough } else { $true }
+        Write-OverlayLog "Click-through mode enabled at startup (config clickThrough=$cfgVal)."
         Write-OverlayLog ("Initial click-through enabled before show (HWND={0}, GWL_EXSTYLE=0x{1:X8})." -f $helper.Handle, $initEx)
+    } else {
+        [WindowStyles]::SetClickThrough($helper.Handle, $false)
+        Write-OverlayLog "Click-through mode disabled at startup (config clickThrough=false)."
     }
 
     # Register global hotkey
@@ -1092,7 +1097,8 @@ if ($null -eq $script:trayIconObj) {
 
 $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
 $script:trayIcon.Icon = $script:trayIconObj
-$script:trayIcon.Text = "LLM Limits Overlay"
+$initTip = if ($script:clickThrough) { "LLM Limits Overlay [сквозь]" } else { "LLM Limits Overlay" }
+$script:trayIcon.Text = $initTip
 $script:trayIcon.Visible = $true
 Write-OverlayLog "Tray icon created successfully (asset: $iconPath, visible: $($script:trayIcon.Visible))."
 
@@ -1201,6 +1207,9 @@ function Set-TrayTooltip($text) {
         $text = "LLM Limits Overlay"
     }
     $text = $text.Trim()
+    if ($script:clickThrough -and -not $text.Contains("[сквозь]")) {
+        $text = "$text [сквозь]"
+    }
     if ($text.Length -gt 63) {
         $text = $text.Substring(0, 60) + "..."
     }
@@ -1208,7 +1217,8 @@ function Set-TrayTooltip($text) {
         $script:trayIcon.Text = $text
     } catch {
         try {
-            $script:trayIcon.Text = "LLM Limits Overlay"
+            $fallback = if ($script:clickThrough) { "LLM Limits Overlay [сквозь]" } else { "LLM Limits Overlay" }
+            $script:trayIcon.Text = $fallback
         } catch {}
     }
 }
