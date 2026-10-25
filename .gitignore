@@ -6,6 +6,13 @@ overlay.log
 .env
 *.env
 
+# .NET build output
+dotnet/bin/
+dotnet/obj/
+bin/
+obj/
+*.exe
+
 # Python caches and bytecode
 __pycache__/
 *.py[cod]
