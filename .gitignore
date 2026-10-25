@@ -1,3 +1,7 @@
+# Paseo workspace metadata
+.paseo
+.paseo/
+
 # Data cache and runtime logs
 limits.json
 limits.json.tmp
