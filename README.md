@@ -1,150 +1,152 @@
 # LLM Limits Overlay
 
-**LLM Limits Overlay** — компактный Always-on-Top HUD-оверлей для Windows 10/11 с воздушной полупрозрачностью (~49%), монохромными индикаторами расхода и ClearType-текстом. Отображает в реальном времени текущие квоты и лимиты популярных нейросетевых моделей: **Gemini**, **Claude / GPT**, **Kimi** и **OpenRouter** в едином минималистичном плавающем окне.
+**English** | [Русский](README.ru.md)
+
+**LLM Limits Overlay** is a compact Always-on-Top HUD overlay for Windows 10/11 featuring lightweight translucency (~49%), monochrome consumption gauges, and sharp ClearType typography. It provides real-time visibility into usage quotas and reset limits for popular AI models: **Gemini**, **Claude / GPT**, **Kimi**, and **OpenRouter** in a single minimalist floating window.
 
 ---
 
-## Скриншоты
+## Screenshots
 
-| На темном фоне (IDE / Терминал) | На светлом фоне (Браузер / Документы) |
+| Dark Background (IDE / Terminal) | Light Background (Browser / Documents) |
 | :---: | :---: |
 | ![Dark Background](docs/screenshots/dark.png) | ![Light Background](docs/screenshots/light.png) |
 
-*(Фоновый текст и окна просвечивают сквозь матовые карточки, при этом проценты и таймеры остаются высококонтрастными и резкими)*
+*(Background text and underlying windows show through the matte translucent cards, while percentages and timers remain sharp and high-contrast)*
 
 ---
 
-## Возможности
+## Features
 
-- **Always-on-Top HUD**: парит над всеми окнами в правом нижнем углу экрана над панелью задач.
-- **Динамическая автоподгонка высоты (`SizeToContent="Height"`)**: окно автоматически принимает высоту содержимого, а нижние скругления и тень карточек никогда не обрезаются.
-- **Без лишних окон и значков**:
-  - `ShowInTaskbar="False"`: не занимает место на панели задач Windows.
-  - `WS_EX_TOOLWINDOW`: исключен из переключателя окон `Alt-Tab`.
-  - Нативное Win32 GUI-приложение (`/target:winexe`) — **никаких мигающих окон консоли CMD или лончеров**.
-- **Монохромная индикация**: единая шкала графитового оттенка, плавно темнеющая по мере расхода квоты от нейтрального серого к глубокому черному (без раздражающих светофорных цветов).
-- **Свободное перемещение и управление из трея**:
-  - Левый клик по окну: перетаскивание окна в любую удобную часть экрана.
-  - Правый клик по окну: контекстное меню для принудительного обновления квот, быстрого переключения окружения («Окружение») и закрытия оверлея.
-  - Иконка в системном трее Windows: показ/скрытие окна в один клик, полное меню управления, сброс позиции и статусная подсказка с процентами.
-- **Нативный опрос без задержек**:
-  - По умолчанию работает полностью нативно в Windows через локальный Python и Antigravity CLI (`agy -p /usage --output-format json`).
-  - Сторожевой таймер (watchdog): 6 секунд для нативного Python, 30 секунд для WSL (настраивается).
-  - Кэширование квот Antigravity (300с) предотвращает избыточные вызовы утилиты, сохраняя актуальность внешних API (OpenRouter, Kimi) на каждом 60-секундном тике.
-
----
-
-## Что отображает оверлей
-
-Оверлей скомпонован сверху вниз тремя логическими блоками:
-
-1. **KIMI** (верхняя карточка):
-   - **Недельный лимит (7d)**: таймер до сброса квоты (например, `3д 8ч`), процент расхода (`100%`) и полоса прогресса.
-   - **5-часовой лимит (5h)**: таймер до сброса (`2ч 41м`), процент расхода (`8.9%`) и шкала.
-   - **Метка времени**: в правом нижнем углу карточки мелким нейтральным шрифтом отображается относительное время последнего обновления (`только что`, `4 мин`, `stale`), обновляемое каждые 10 секунд.
-   - Источник: официальный эндпоинт `GET https://api.kimi.com/coding/v1/usages`.
-
-2. **OPENROUTER** (средняя карточка):
-   - **Лимит ключа / аккаунта**: таймер до расчетного сброса (`2д 13ч`), процент расхода (`3.7%`) и полоса прогресса.
-   - **Служебная строка**: количество использованных бесплатных запросов (`free: 0/1000`) и остаток кредитного баланса (`ост. $9.63`).
-   - Источник: `GET https://openrouter.ai/api/v1/key`.
-
-3. **GEMINI + CLAUDE / GPT** (нижняя объединенная карточка):
-   - Модели объединены в одну карточку с деликатным тонким разделителем:
-     - **GEMINI**: недельное окно (7d, сверху) и 5-часовое окно (5h, снизу).
-     - **CLAUDE / GPT**: недельное окно (7d, сверху) и 5-часовое окно (5h, снизу).
-   - Источник: официальный CLI Antigravity (`agy -p /usage --output-format json`) или локальный Language Server при работе в WSL.
+- **Always-on-Top HUD**: Floats seamlessly above all windows in the bottom-right corner of the screen above the taskbar.
+- **Dynamic Height Auto-Sizing (`SizeToContent="Height"`)**: Automatically conforms to content height so card shadows and rounded bottom corners are never clipped.
+- **Zero Desktop Clutter**:
+  - `ShowInTaskbar="False"`: Does not take up space on the Windows taskbar.
+  - `WS_EX_TOOLWINDOW`: Excluded from the `Alt-Tab` application switcher.
+  - Native Win32 GUI subsystem (`/target:winexe`): Launches silently without flashing CMD/PowerShell console windows or helper launchers.
+- **Monochrome Visual Indicators**: A unified graphite scale that gradually darkens as quota is consumed (from neutral gray to deep black), avoiding distracting traffic-light colors.
+- **Free Dragging & System Tray Control**:
+  - Left-click and drag: Move the HUD to any preferred position on the screen.
+  - Right-click: Context menu for manual quota refresh, runtime environment switching, and exiting.
+  - Windows System Tray icon: Single-click show/hide, comprehensive control menu, position reset, and tooltip with live percentages.
+- **Fast Native Polling**:
+  - Operates natively on Windows using local Python and the Antigravity CLI (`agy -p /usage --output-format json`).
+  - Watchdog timer: 6 seconds for native Windows Python, 30 seconds for WSL (configurable).
+  - Quota caching (300s) minimizes CLI overhead while keeping external APIs (OpenRouter, Kimi) fresh on each 60-second polling cycle.
 
 ---
 
-## Системные требования
+## Quota Metrics Displayed
 
-- **ОС**: Windows 10 или Windows 11 (64-bit) с .NET Framework 4.8 (входит в состав Windows).
-- **Python**: Python 3.10+ на Windows (по умолчанию). WSL не требуется для работы.
-- **WSL 2** *(опционально)*: требуется только при явном выборе режима `wsl` или при отсутствии нативного Python в режиме `auto`.
+The overlay presents information in three logical vertical cards from top to bottom:
+
+1. **KIMI** (Top card):
+   - **Weekly Limit (7d)**: Time until quota reset (e.g., `3d 8h`), percentage consumed (`100%`), and visual progress gauge.
+   - **5-Hour Limit (5h)**: Time until reset (`2h 41m`), percentage consumed (`8.9%`), and progress bar.
+   - **Timestamp**: Subtle relative update time (`just now`, `4m ago`, `stale`) in the bottom-right corner, refreshed every 10 seconds.
+   - Source: Official endpoint `GET https://api.kimi.com/coding/v1/usages`.
+
+2. **OPENROUTER** (Middle card):
+   - **Key / Account Limit**: Time until calculated reset (`2d 13h`), percentage consumed (`3.7%`), and progress gauge.
+   - **Secondary Status Line**: Free tier daily requests used (`free: 0/1000`) and remaining credit balance (`rem. $9.63` / `ост. $9.63`).
+   - Source: Official endpoint `GET https://openrouter.ai/api/v1/key`.
+
+3. **GEMINI + CLAUDE / GPT** (Bottom combined card):
+   - Grouped into a single card separated by a subtle divider:
+     - **GEMINI**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
+     - **CLAUDE / GPT**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
+   - Source: Official Antigravity CLI (`agy -p /usage --output-format json`) or local Language Server fallback when running under WSL.
 
 ---
 
-## Выбор окружения (Бэкенды)
+## System Requirements
 
-Оверлей поддерживает три режима запуска фонового скрипта получения данных (`fetch_quota.py`):
+- **OS**: Windows 10 or Windows 11 (64-bit) with .NET Framework 4.8 (included out of the box in Windows).
+- **Python**: Python 3.10+ on Windows (default). WSL is not required for standard usage.
+- **WSL 2** *(optional)*: Only required if explicitly choosing the `wsl` backend or when native Windows Python is unavailable in `auto` mode.
 
-1. **`auto`** *(по умолчанию)*:
-   - В первую очередь ищет и использует нативный интерпретатор Python на Windows.
-   - При отсутствии нативного Python автоматически пытается задействовать WSL.
+---
+
+## Backend Environments
+
+The overlay supports three execution modes for the background quota worker script (`fetch_quota.py`):
+
+1. **`auto`** *(default)*:
+   - Probes and uses the native Windows Python interpreter first.
+   - If native Python is not found, automatically falls back to WSL.
 2. **`windows`**:
-   - Работает исключительно через нативный Python на Windows. Вызовы `wsl.exe` полностью исключены.
-   - Если Python не найден, в служебной строке отображается `нет python`.
+   - Runs exclusively via native Python on Windows. Calls to `wsl.exe` are completely bypassed.
+   - Displays `no python` in the status line if Python is not installed.
 3. **`wsl`**:
-   - Работает только внутри WSL. Автоматически находит дистрибутив Linux с установленным `python3` (исключая служебные дистрибутивы вроде `docker-desktop`).
-   - Если подходящий дистрибутив не найден, в строке статуса отображается `нет wsl`.
+   - Executes inside WSL. Automatically discovers an installed Linux distribution with `python3` (skipping system distros like `docker-desktop`).
+   - Displays `no wsl` in the status line if no compatible distribution is found.
 
-### Переключение через интерфейс
-Нажмите правой кнопкой мыши по любой карточке оверлея:
-- **Обновить** — принудительное немедленное обновление данных.
-- **Окружение**:
-  - `[x] Авто`
-  - `[ ] Windows (нативный Python)`
+### Switching Backends via Interface
+Right-click anywhere on the overlay window cards:
+- **Refresh** — Force an immediate data refresh.
+- **Environment**:
+  - `[x] Auto`
+  - `[ ] Windows (Native Python)`
   - `[ ] WSL`
-- **Закрыть** — выход из программы.
+- **Close** — Exit the application.
 
-При смене режима выбор мгновенно сохраняется в `overlay.config.json`, сбрасывается признак устаревания данных и запускается опрос квот.
+Changing the backend immediately updates `overlay.config.json`, clears stale flags, and triggers a fresh background fetch.
 
 ---
 
-## Иконка в трее
+## System Tray Icon
 
-Оверлей снабжен значком в системной области уведомлений (Windows System Tray), позволяющим полноценно контролировать HUD даже тогда, когда само окно скрыто или перекрыто другими полноэкранными приложениями.
+The application includes an icon in the Windows Notification Area (System Tray), providing complete control over the HUD even when the window is hidden or covered by full-screen applications.
 
-### Действия с иконкой
-- **Клик или двойной клик левой кнопкой мыши**: мгновенно скрывает или возвращает окно оверлея на экран (положение окна при скрытии и повторном показе полностью сохраняется).
-- **Всплывающая подсказка (Tooltip)**: при наведении курсора на значок выводится компактная сводка текущих лимитов в одну строку (например: `Kimi 7д 100% · Gemini 47% · Claude 50%`), обновляемая автоматически при каждой перезагрузке данных.
+### Tray Icon Interactions
+- **Single or Double Left-Click**: Instantly toggles HUD visibility (window coordinates are fully preserved across hide/show cycles).
+- **Tooltip**: Hovering over the icon displays a compact one-line status summary (e.g., `Kimi 7d 100% · Gemini 47% · Claude 50% [click-through]`), updated on every polling tick.
 
-### Контекстное меню трея (правый клик)
-- **«Показать оверлей» / «Скрыть оверлей»** — переключает видимость окна с сохранением его текущих координат.
-- *Разделитель*
-- **«Обновить квоты»** — принудительный немедленный опрос API (блокируется на время выполнения фонового запроса).
-- **«Окружение»** — подменю выбора интерпретатора (`Авто`, `Windows (нативный Python)`, `WSL`), синхронизированное с контекстным меню окна. При выборе бэкенд записывается в `overlay.config.json` и немедленно запускается опрос квот.
-- **«Клики насквозь»** — переключатель режима прозрачности оверлея для мыши (с отметкой состояния).
-- *Разделитель*
-- **«Сбросить позицию»** — возвращает перемещенный оверлей в исходное положение в правом нижнем углу экрана над панелью задач.
-- **«Выход»** — корректно удаляет иконку из трея, закрывает окно и завершает фоновый процесс.
+### Tray Context Menu (Right-Click)
+- **Show Overlay / Hide Overlay** — Toggles window visibility while maintaining coordinates.
+- *Separator*
+- **Refresh Quotas** — Forces an immediate API query (disabled while a query is in progress).
+- **Environment** — Interpreter selection submenu (`Auto`, `Windows (Native Python)`, `WSL`), synchronized with the window context menu.
+- **Click-Through** — Toggles mouse click-through transparency mode.
+- *Separator*
+- **Reset Position** — Restores the HUD to its default docking spot in the bottom-right corner above the taskbar.
+- **Exit** — Safely unregisters global hotkeys, cleans up the tray icon, closes the window, and terminates the background process.
 
 > [!NOTE]
-> **Windows 11**: новые значки приложений операционная система по умолчанию помещает в область скрытых значков (переполнение / overflow, кнопка со стрелкой `^`). Чтобы иконка отображалась в трее постоянно:
-> перейдите в **Параметры → Персонализация → Панель задач → «Другие значки в трее»** и включите переключатель для оверлея, либо просто перетащите значок мышью из окна `^` на основную панель задач.
+> **Windows 11**: By default, Windows 11 places new tray icons inside the overflow menu (the `^` arrow button). To keep the overlay icon always visible:
+> Navigate to **Settings → Personalization → Taskbar → Other system tray icons** and enable the toggle for the overlay, or simply drag the icon from the `^` flyout directly onto the primary taskbar.
 
 ---
 
-## Режим «клики насквозь»
+## Click-Through Mode
 
-Оверлей поддерживает специальный режим **«клики насквозь» (click-through mode)**, который **включен по умолчанию**.
+The overlay features a dedicated **click-through mode**, which is **enabled by default**.
 
-В этом режиме:
-- Окно оверлея абсолютно прозрачно для мыши на уровне Win32 (`WS_EX_TRANSPARENT`).
-- Любые действия мыши — левые и правые клики, двойные клики, прокрутка колесика и наведение курсора — беспрепятственно проходят в окна и элементы управления, расположенные под оверлеем.
-- Окно оверлея **нельзя перетаскивать мышью**, и по нему **не открывается контекстное меню правого клика**.
-- Сам оверлей визуально отображается поверх всех окон, не мешая работе с окнами под ним. Позиция окна по умолчанию фиксируется в правом нижнем углу над панелью задач, а сбросить или вернуть её можно через пункт трея **«Сбросить позицию»**.
+In this mode:
+- The window is completely transparent to mouse events at the Win32 subsystem level (`WS_EX_TRANSPARENT`).
+- All mouse actions — left and right clicks, double-clicks, scroll wheel movements, and hovering — pass directly through to windows and UI elements positioned underneath the overlay.
+- The overlay window **cannot be dragged with the mouse**, and **right-clicking it does not open the context menu**.
+- The HUD remains visually pinned on top of all windows without impeding desktop interaction. The default position sits above the taskbar in the bottom-right corner, and can be repositioned via the tray menu's **Reset Position**.
 
-### Как выключить или переключить режим
-Если вам требуется интерактивное взаимодействие с окном (перетаскивание или вызов его контекстного меню), режим можно временно или постоянно отключить:
-1. **Глобальная горячая клавиша**: комбинация **`Ctrl+Alt+L`** (работает глобально из любого приложения). Первое нажатие моментально выключает режим и возвращает интерактивность окну, повторное — снова включает сквозные клики.
-2. **Контекстное меню трея**: правый клик по значку в системном трее → пункт **«Клики насквозь»** (снять галочку).
-3. **Файл конфигурации**: установить `"clickThrough": false` в `overlay.config.json`, чтобы оверлей запускался в стандартном интерактивном режиме.
+### How to Toggle or Disable Click-Through
+When interactive manipulation is needed (to reposition the window or open its context menu), click-through can be temporarily or permanently disabled:
+1. **Global Keyboard Shortcut**: Press **`Ctrl+Alt+L`** (works globally from any application). The first keypress disables click-through and restores mouse interactivity; pressing it again re-enables click-through.
+2. **System Tray Context Menu**: Right-click the system tray icon → select **Click-Through** (uncheck).
+3. **Configuration File**: Set `"clickThrough": false` in `overlay.config.json` to start in standard interactive mode.
 
-При каждом переключении в системном трее выводится информационное уведомление (balloon tip), а во всплывающей подсказке к иконке отображается статус `[сквозь]` (когда режим активен). Выбранное состояние автоматически сохраняется в `overlay.config.json` и восстанавливается при следующем запуске.
+Each state change displays an informative balloon tip in the system tray, and the tooltip reflects the active mode with a `[click-through]` tag. The preference is automatically saved to `overlay.config.json` and restored on subsequent launches.
 
 > [!WARNING]
-> **Ограничения режима**: когда включен режим «клики насквозь», клики по самому окну оверлея не регистрируются приложением.
-> **Значок в системном трее и глобальная комбинация клавиш (`Ctrl+Alt+L`) — единственные способы вернуть интерактивное взаимодействие.**
+> **Click-Through Mode Limitation**: While click-through is enabled, mouse clicks directly on the overlay window are ignored by design.
+> **The system tray icon and the global hotkey (`Ctrl+Alt+L`) are the only ways to restore interactive mouse control.**
 
 ---
 
-## Конфигурация
+## Configuration
 
-### Файл `overlay.config.json`
+### File: `overlay.config.json`
 
-Файл конфигурации создается автоматически рядом со скриптом и позволяет тонко настроить окружение:
+The configuration file is automatically created next to the executable if not present:
 
 ```json
 {
@@ -158,105 +160,108 @@
 }
 ```
 
-- `backend`: выбранный режим (`auto`, `windows`, `wsl`).
-- `pythonPath`: явный путь к интерпретатору Python (если нужно использовать конкретный venv).
-- `wslDistro`: имя конкретного дистрибутива WSL (если не задано, определяется автоматически).
-- `timeoutSeconds`: переопределение тайм-аута сторожевого таймера (0 — значения по умолчанию: 6с для Windows, 30с для WSL).
-- `testHooks`: включение тестовых хуков через управляющий файл `.tray-action` (по умолчанию `false`, выключено).
-- `clickThrough`: режим «клики насквозь» при запуске оверлея (по умолчанию `true`, включено). Задайте `false`, если требуется запуск в интерактивном режиме.
-- `clickThroughHotkey`: глобальная комбинация клавиш для быстрого переключения режима (по умолчанию `"Ctrl+Alt+L"`, поддерживает модификаторы Ctrl, Alt, Shift, Win и клавиши).
+- `backend`: Execution mode (`auto`, `windows`, `wsl`).
+- `pythonPath`: Explicit path to a Python executable (useful for dedicated virtual environments).
+- `wslDistro`: Explicit WSL distribution name (if omitted, auto-discovered).
+- `timeoutSeconds`: Watchdog timeout override in seconds (0 uses defaults: 6s for Windows, 30s for WSL).
+- `testHooks`: Enables programmatic control via `.tray-action` (default `false`).
+- `clickThrough`: Startup click-through state (default `true`). Set to `false` for standard interactive mode.
+- `clickThroughHotkey`: Global shortcut for toggling click-through (default `"Ctrl+Alt+L"`).
 
-### Переменные окружения
+### Environment Variables
 
-Приоритет настроек: **Переменная окружения → `overlay.config.json` → Значение по умолчанию**.
+Settings priority: **Environment Variable → `overlay.config.json` → Built-in Default**.
 
-- `LLM_LIMITS_BACKEND`: режим бэкенда (`auto`, `windows`, `wsl`).
-- `LLM_LIMITS_PYTHON`: явный путь к исполняемому файлу Python на Windows.
-- `LLM_LIMITS_AGY_BIN`: явный путь к `agy.exe`.
-- `LLM_LIMITS_QUOTA_CACHE_SECONDS`: время кэширования квот Antigravity (по умолчанию `300`).
-- `LLM_LIMITS_WSL_DISTRO` / `AGY_WSL_DISTRO`: имя дистрибутива WSL (например, `Ubuntu-24.04`).
-- `LLM_LIMITS_WSL_SCRIPT` / `AGY_WSL_SCRIPT`: явный путь к `fetch_quota.py` внутри WSL.
-- `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: путь для выгрузки результирующего кэша JSON.
+- `LLM_LIMITS_BACKEND`: Backend mode (`auto`, `windows`, `wsl`).
+- `LLM_LIMITS_PYTHON`: Explicit path to the Windows Python binary.
+- `LLM_LIMITS_AGY_BIN`: Explicit path to `agy.exe`.
+- `LLM_LIMITS_QUOTA_CACHE_SECONDS`: Cache duration for Antigravity quota calls (default `300`).
+- `LLM_LIMITS_WSL_DISTRO` / `AGY_WSL_DISTRO`: Target WSL distribution (e.g., `Ubuntu-24.04`).
+- `LLM_LIMITS_WSL_SCRIPT` / `AGY_WSL_SCRIPT`: Target script path inside WSL.
+- `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: Output path for the cached quota JSON file.
 
 ---
 
-## Настройка API-ключей
+## API Key Setup
 
-Для отображения лимитов OpenRouter и Kimi скрипту требуются соответствующие API-ключи.
+To display OpenRouter and Kimi quota metrics, the overlay requires valid API keys.
 
-### Правило единого источника (Single Source)
-API-ключи читаются **исключительно из одного места** — локального файла `.env`, находящегося в корне репозитория рядом со скриптом `fetch_quota.py` (`<repo>\.env`).
+### Single Source of Truth
+API keys are loaded **exclusively from one location** — the local `.env` file located in the root repository folder next to `fetch_quota.py` (`<repo>\.env`).
 
 > [!IMPORTANT]
-> **Переменные окружения операционной системы (`os.environ`), пути `HERMES_ENV_PATH`, `~/.hermes/.env`, реестр Windows и домашние каталоги WSL намеренно НЕ читаются**, чтобы исключить неявное поведение и случайные утечки ключей из системного окружения.
+> **Operating system environment variables (`os.environ`), `HERMES_ENV_PATH`, `~/.hermes/.env`, the Windows Registry, and WSL home directories are intentionally NOT read**, eliminating ambiguous behavior and accidental key leakage.
 
-### Пример файла `.env`
-Шаблон доступен в репозитории в файле `.env.example`:
+### Example `.env` File
+A template is provided in the repository as [.env.example](.env.example):
 
 ```env
-# LLM Limits Overlay - Конфигурация API-ключей
-# Ключи читаются ИСКЛЮЧИТЕЛЬНО из файла .env в корне репозитория (<repo>\.env).
-# Переменные окружения ОС (os.environ), HERMES_ENV_PATH, ~/.hermes/.env намеренно НЕ читаются.
+# LLM Limits Overlay - API Key Configuration
+# Keys are read EXCLUSIVELY from the .env file in the root directory (<repo>\.env).
+# OS environment variables (os.environ), HERMES_ENV_PATH, and ~/.hermes/.env are intentionally ignored.
 
 OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxx
 KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-Встроенный парсер (чистая стандартная библиотека Python, без внешних зависимостей) поддерживает:
-- UTF-8 BOM и стандартный UTF-8;
-- переводы строк CRLF (Windows) и LF (Linux);
-- пустые строки и комментарии, начинающиеся с `#`;
-- опциональный префикс `export `;
-- пробелы вокруг знака равенства (`KEY = value`);
-- одинарные и двойные кавычки вокруг значений (`'...'` / `"..."`);
-- замыкающие инлайн-комментарии после значений вне кавычек (`KEY=value # комментарий`);
-- пропуск некорректных строк без вызова исключений.
+The built-in parser (pure Python standard library, zero third-party dependencies) supports:
+- UTF-8 with or without BOM;
+- Both CRLF (Windows) and LF (Linux) line endings;
+- Blank lines and comments starting with `#`;
+- Optional `export ` prefix;
+- Whitespace around `=` (`KEY = value`);
+- Single and double quotes around values (`'...'` / `"..."`);
+- Trailing inline comments after unquoted values (`KEY=value # comment`);
+- Safe skipping of malformed lines without throwing exceptions.
 
-*(Ключи никогда не выводятся в терминал/stdout/stderr, не отображаются в интерфейсе, не записываются в `overlay.log` и не сохраняются в файлы кэша `limits.json`)*.
+*(Keys are never printed to terminal/stdout/stderr, never displayed in the UI, never written to `overlay.log`, and never stored in `limits.json` cache files)*.
 
 ---
 
-## Установка и запуск
+## Installation & Running
 
-Единственный способ запуска оверлея — исполняемый файл **`LlmLimitsOverlay.exe`**.
+The primary and only method for running the overlay is the compiled executable **`LlmLimitsOverlay.exe`**.
 
 > [!NOTE]
-> **PowerShell-версия удалена из master; она доступна в теге/релизе v1.0.0.** Начиная с версии v1.1.0 оверлей работает исключительно как нативное C# GUI-приложение (.NET Framework 4.8 / WPF).
+> **The PowerShell version has been removed from master; it remains accessible in tag and release [v1.0.0](https://github.com/Kzamirtay/llm-limits-overlay/releases/tag/v1.0.0).** Starting with version v1.1.0, the project runs exclusively as a standalone native C# application (.NET Framework 4.8 / WPF).
 
-### Требования к окружению для запуска
-Рядом с `LlmLimitsOverlay.exe` должны лежать следующие файлы:
-- `fetch_quota.py` — Python-скрипт опроса квот (Antigravity CLI / OpenRouter / Kimi);
-- `assets/app.ico` — иконка приложения для окна и системного трея;
-- `overlay.config.json` — конфигурация (создаётся автоматически, если отсутствует);
-- `.env` — файл API-ключей (`OPENROUTER_API_KEY`, `KIMI_API_KEY`);
-- Установленный Python 3 (3.10+) на Windows для нативного опроса квот.
+### Runtime Directory Requirements
+The following files must be located in the same directory as `LlmLimitsOverlay.exe`:
+- `fetch_quota.py` — Python quota fetcher script (Antigravity CLI / OpenRouter / Kimi);
+- `assets/app.ico` — Application icon for the HUD and system tray;
+- `overlay.config.json` — Configuration file (automatically generated if missing);
+- `.env` — API key configuration file (`OPENROUTER_API_KEY`, `KIMI_API_KEY`);
+- Python 3 (3.10+) installed on Windows for native quota retrieval.
 
-### Способы запуска
+### Launch Options
 
-#### 1. Запуск готового бинарника
-Двойной клик по `LlmLimitsOverlay.exe` в проводнике Windows или запуск из командной строки:
-```cmd
-LlmLimitsOverlay.exe
-```
-(или `.\dotnet\bin\LlmLimitsOverlay.exe` при локальной разработке из корня репозитория).
-Приложение скомпилировано как подсистема Windows GUI (`/target:winexe`) и стартует бесшумно — без мигающих консольных окон CMD или вспомогательных лончеров.
+#### 1. Running the Prebuilt Binary from Releases
+1. Download `LlmLimitsOverlay-v1.1.0-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+2. Extract the archive into any preferred directory.
+3. Create your `.env` file with your API keys (copy from `.env.example`).
+4. Launch `LlmLimitsOverlay.exe` by double-clicking it in Windows Explorer or from the command line:
+   ```cmd
+   LlmLimitsOverlay.exe
+   ```
+   (or `.\dotnet\bin\LlmLimitsOverlay.exe` during local development from the repository root).
+   The application starts cleanly as a Windows GUI subsystem process (`/target:winexe`) without console flashes.
 
-#### 2. Сборка из исходников
-Если вы клонировали репозиторий и хотите собрать бинарник самостоятельно:
+#### 2. Building from Source
+If you cloned the repository and wish to compile the binary locally:
 ```cmd
 dotnet\build.cmd
 ```
-Скрипт автоматически находит системный `csc.exe` (`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`), не требует установки Visual Studio, MSBuild или .NET SDK, и компилирует автономный бинарник в:
+The build script automatically locates the system compiler `csc.exe` (`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`), requires no Visual Studio, MSBuild, or .NET SDK installation, and produces an optimized standalone executable in:
 ```
 dotnet\bin\LlmLimitsOverlay.exe
 ```
-Подробная техническая документация и архитектура порта описаны в [dotnet/README.md](dotnet/README.md).
+Technical architecture details are documented in [dotnet/README.md](dotnet/README.md).
 
 ---
 
-## Диагностика и логи
+## Diagnostics & Logs
 
-Все события запуска, разрешение интерпретаторов, PID процессов, результаты опроса и возможные ошибки фиксируются в файле `overlay.log` рядом со скриптом:
+Startup sequences, interpreter discovery, process IDs, query results, and errors are logged to `overlay.log` in the application directory:
 
 ```
 [2026-10-25 00:11:18] === LLM Limits Overlay Starting (PID=21240) ===
@@ -269,34 +274,35 @@ dotnet\bin\LlmLimitsOverlay.exe
 
 ---
 
-## Структура файлов репозитория
+## Repository File Structure
 
 ```
 llm-limits-overlay/
 ├── assets/
-│   └── app.ico                  # Иконка приложения (монохромная, мультиразмерная)
+│   └── app.ico                  # Application icon (multi-resolution Win32 icon)
 ├── docs/
 │   └── screenshots/
-│       ├── cs-version.png       # Скриншот нативной C# версии
-│       ├── dark.png             # Скриншот оверлея на темном фоне
-│       ├── light.png            # Скриншот оверлея на светлом фоне
-│       └── ps-version.png       # Скриншот PowerShell версии
-├── dotnet/                      # Исходный код нативной C# версии (.NET Framework 4.8 / WPF)
-│   ├── LlmLimitsOverlay/        # C# исходники (.cs)
-│   ├── build.cmd                # Скрипт сборки через csc.exe без внешних SDK
-│   └── README.md                # Документация C# архитектуры
-├── fetch_quota.py               # Python-скрипт опроса квот (Antigravity CLI / OpenRouter / Kimi)
-├── LlmLimitsOverlay.exe         # Скомпилированный нативный оверлей
-├── overlay.config.json          # Конфигурация бэкенда и путей (создается автоматически)
-├── .env.example                 # Шаблон конфигурации API-ключей (OpenRouter, Kimi)
-├── .gitignore                   # Исключение кэшей, логов и локальных файлов
-├── LICENSE                      # Лицензия MIT
-└── README.md                    # Документация проекта
+│       ├── cs-version.png       # Native C# version screenshot
+│       ├── dark.png             # Overlay on dark background
+│       ├── light.png            # Overlay on light background
+│       └── ps-version.png       # Legacy PowerShell version screenshot (v1.0.0)
+├── dotnet/                      # C# source code (.NET Framework 4.8 / WPF)
+│   ├── LlmLimitsOverlay/        # C# source files (.cs)
+│   ├── build.cmd                # Standalone build script via csc.exe (no external SDK required)
+│   └── README.md                # Architecture documentation
+├── fetch_quota.py               # Quota fetcher script (Antigravity CLI / OpenRouter / Kimi)
+├── LlmLimitsOverlay.exe         # Compiled native overlay executable
+├── overlay.config.json          # Configuration file (auto-generated if missing)
+├── .env.example                 # Template for API keys (OpenRouter, Kimi)
+├── .gitignore                   # Git ignore patterns for caches, logs, and local state
+├── LICENSE                      # MIT License
+├── README.md                    # Project documentation (English)
+└── README.ru.md                 # Project documentation (Russian)
 ```
 
 ---
 
-## Лицензия
+## License
 
-Проект распространяется под открытой лицензией [MIT](LICENSE).
-Авторские права (c) 2026 Kzamirtay.
+This project is licensed under the open-source [MIT License](LICENSE).
+Copyright (c) 2026 Kzamirtay.
