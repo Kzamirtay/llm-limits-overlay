@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 
@@ -7,6 +8,16 @@ namespace LlmLimitsOverlay {
     public class Config {
         private static readonly object _syncLock = new object();
         private static string _configFilePath;
+
+        private static readonly string[] CanonicalKeyOrder = new string[] {
+            "backend",
+            "pythonPath",
+            "wslDistro",
+            "timeoutSeconds",
+            "testHooks",
+            "clickThroughHotkey",
+            "clickThrough"
+        };
 
         public string Backend { get; set; }
         public string PythonPath { get; set; }
@@ -59,6 +70,78 @@ namespace LlmLimitsOverlay {
             return cfg;
         }
 
+        public static string SerializePsCompatible(Dictionary<string, object> dict) {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{\r\n");
+
+            List<string> keys = new List<string>();
+            foreach (string k in CanonicalKeyOrder) {
+                foreach (string existingKey in dict.Keys) {
+                    if (string.Equals(existingKey, k, StringComparison.OrdinalIgnoreCase)) {
+                        keys.Add(existingKey);
+                        break;
+                    }
+                }
+            }
+            foreach (string existingKey in dict.Keys) {
+                bool found = false;
+                foreach (string k in CanonicalKeyOrder) {
+                    if (string.Equals(existingKey, k, StringComparison.OrdinalIgnoreCase)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    keys.Add(existingKey);
+                }
+            }
+
+            for (int i = 0; i < keys.Count; i++) {
+                string key = keys[i];
+                object val = dict[key];
+
+                sb.Append("    \"");
+                sb.Append(key);
+                sb.Append("\":  ");
+
+                if (val == null) {
+                    sb.Append("null");
+                } else if (val is bool) {
+                    sb.Append((bool)val ? "true" : "false");
+                } else if (val is int || val is long || val is short || val is byte) {
+                    sb.Append(val.ToString());
+                } else if (val is double || val is float || val is decimal) {
+                    double d = Convert.ToDouble(val);
+                    if (Math.Floor(d) == d) {
+                        sb.Append(((long)d).ToString());
+                    } else {
+                        sb.Append(d.ToString(CultureInfo.InvariantCulture));
+                    }
+                } else {
+                    sb.Append("\"");
+                    string s = val.ToString();
+                    for (int j = 0; j < s.Length; j++) {
+                        char c = s[j];
+                        if (c == '"') sb.Append("\\\"");
+                        else if (c == '\\') sb.Append("\\\\");
+                        else if (c == '\r') sb.Append("\\r");
+                        else if (c == '\n') sb.Append("\\n");
+                        else if (c == '\t') sb.Append("\\t");
+                        else sb.Append(c);
+                    }
+                    sb.Append("\"");
+                }
+
+                if (i < keys.Count - 1) {
+                    sb.Append(",");
+                }
+                sb.Append("\r\n");
+            }
+
+            sb.Append("}");
+            return sb.ToString();
+        }
+
         public static void SaveField(string field, object value) {
             if (string.IsNullOrEmpty(_configFilePath)) return;
 
@@ -83,9 +166,17 @@ namespace LlmLimitsOverlay {
                         dict["clickThrough"] = true;
                     }
 
-                    dict[field] = value;
-                    string json = SimpleJson.Serialize(dict, true);
-                    File.WriteAllText(_configFilePath, json, Encoding.UTF8);
+                    string matchedKey = field;
+                    foreach (string k in CanonicalKeyOrder) {
+                        if (string.Equals(k, field, StringComparison.OrdinalIgnoreCase)) {
+                            matchedKey = k;
+                            break;
+                        }
+                    }
+                    dict[matchedKey] = value;
+
+                    string json = SerializePsCompatible(dict);
+                    File.WriteAllText(_configFilePath, json, new UTF8Encoding(true));
                 }
             } catch (Exception ex) {
                 Logger.Log("Error saving config (" + field + "=" + value + "): " + ex.Message);
