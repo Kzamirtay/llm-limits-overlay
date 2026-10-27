@@ -236,7 +236,7 @@ The following files must be located in the same directory as `LlmLimitsOverlay.e
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download `LlmLimitsOverlay-v1.1.0-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download `LlmLimitsOverlay-v1.1.1-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
 4. Launch `LlmLimitsOverlay.exe` by double-clicking it in Windows Explorer or from the command line:

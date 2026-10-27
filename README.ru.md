@@ -236,7 +236,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### Способы запуска
 
 #### 1. Запуск готового бинарника из Releases
-Скачайте архив `LlmLimitsOverlay-v1.1.0-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases), распакуйте в любую удобную папку, создайте `.env` и запустите `LlmLimitsOverlay.exe` двойным кликом в проводнике Windows или из командной строки:
+Скачайте архив `LlmLimitsOverlay-v1.1.1-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases), распакуйте в любую удобную папку, создайте `.env` и запустите `LlmLimitsOverlay.exe` двойным кликом в проводнике Windows или из командной строки:
 ```cmd
 LlmLimitsOverlay.exe
 ```
