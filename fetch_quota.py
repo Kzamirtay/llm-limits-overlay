@@ -447,52 +447,52 @@ def find_agy_binary():
     r"""
     Locates agy binary in order:
     1. LLM_LIMITS_AGY_BIN
-    2. agy.exe / agy on PATH
-    3. %LOCALAPPDATA%\agy\bin\agy.exe
-    4. %USERPROFILE%\AppData\Local\agy\bin\agy.exe
+    2. On Linux/WSL: native Linux agy executable (never .exe)
+    3. On Windows: agy.exe / agy on PATH, %LOCALAPPDATA%\agy\bin\agy.exe, %USERPROFILE%\AppData\Local\agy\bin\agy.exe
     """
     # 1. env LLM_LIMITS_AGY_BIN
     env_bin = os.environ.get("LLM_LIMITS_AGY_BIN", "").strip()
     if env_bin and os.path.isfile(env_bin):
-        return env_bin
+        if not sys.platform.startswith("linux") or not env_bin.endswith(".exe"):
+            return env_bin
 
-    # 2. agy.exe or agy on PATH
+    # 2. Linux / WSL resolution: strictly avoid invoking Windows .exe to prevent
+    # ConPTY / vsock hangs and unexpected OAuth browser launch on Windows host.
+    if sys.platform.startswith("linux"):
+        for cand in [
+            os.path.expanduser("~/.local/bin/agy"),
+            "/usr/local/bin/agy",
+            "/usr/bin/agy"
+        ]:
+            if os.path.isfile(cand) and not cand.endswith(".exe"):
+                return cand
+        found = shutil.which("agy")
+        if found and os.path.isfile(found) and not found.endswith(".exe"):
+            return found
+        return None
+
+    # 3. Windows host resolution
     for name in ["agy.exe", "agy"]:
         found = shutil.which(name)
         if found and os.path.isfile(found):
             return found
 
-    # 3. %LOCALAPPDATA%\agy\bin\agy.exe
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if local_app_data:
         cand = os.path.join(local_app_data, "agy", "bin", "agy.exe")
         if os.path.isfile(cand):
             return cand
 
-    # 4. %USERPROFILE%\AppData\Local\agy\bin\agy.exe
     user_prof = os.environ.get("USERPROFILE", "")
     if user_prof:
         cand = os.path.join(user_prof, "AppData", "Local", "agy", "bin", "agy.exe")
         if os.path.isfile(cand):
             return cand
 
-    # Home dir expansion fallback
     home = os.path.expanduser("~")
     cand = os.path.join(home, "AppData", "Local", "agy", "bin", "agy.exe")
     if os.path.isfile(cand):
         return cand
-
-    # WSL mount path if run inside WSL
-    if sys.platform.startswith("linux") or os.path.isdir("/mnt/c"):
-        wsl_candidates = [
-            "/mnt/c/Users/Dimash/AppData/Local/agy/bin/agy.exe",
-            os.path.expanduser("~/.local/bin/agy"),
-            "/usr/local/bin/agy",
-            "/usr/bin/agy"
-        ]
-        for wc in wsl_candidates:
-            if os.path.isfile(wc):
-                return wc
 
     return None
 
@@ -572,9 +572,15 @@ def fetch_agy_quota():
             proc_resp, proc_addr = query_live_quota_proc()
             if proc_resp:
                 return proc_resp, proc_resp, None, False
-        return None, None, "missing agy.exe (not found in LLM_LIMITS_AGY_BIN, PATH, or AppData)", False
+        return None, None, "missing agy (not found in LLM_LIMITS_AGY_BIN, PATH, or AppData)", False
 
-    # 3. Execute subprocess
+    # 3. Prevent agy from triggering interactive OAuth browser popups if not authenticated
+    if sys.platform.startswith("win"):
+        tok_path = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
+        if not os.path.isfile(tok_path) or os.path.getsize(tok_path) == 0:
+            return None, None, "auth required: agy not logged in (run 'agy auth login')", False
+
+    # 4. Execute subprocess
     sys.stderr.write(f"[live] running {agy_bin} -p /usage --output-format json...\n")
     cmd = [agy_bin, "-p", "/usage", "--output-format", "json"]
 
