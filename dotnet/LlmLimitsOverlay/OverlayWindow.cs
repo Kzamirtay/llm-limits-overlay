@@ -22,7 +22,8 @@ namespace LlmLimitsOverlay {
         private const double MarginBottom = 4.0;
 
         // UI controls
-        private TextBlock _txtUpdated;
+        // Per-card updated lines (_txtKimiUpdated/_txtOrUpdated/_txtAgyUpdated)
+        // are declared below together with their relative-time state.
 
         // Kimi
         private Grid _rowKimi7d;
@@ -77,8 +78,19 @@ namespace LlmLimitsOverlay {
         private DispatcherTimer _mainTimer;
 
         private QuotaSnapshot _lastSnapshot;
-        private string _lastUpdatedStr;
-        private bool _lastIsStale = false;
+
+        // Per-card relative-time state (Kimi / OpenRouter / Gemini+Claude-GPT).
+        // Strings and time format live in OverlayTheme.GetRelativeTimeText —
+        // single point of edit for wording/format of all three card lines.
+        private TextBlock _txtKimiUpdated;
+        private TextBlock _txtOrUpdated;
+        private TextBlock _txtAgyUpdated;
+        private string _kimiUpdatedStr;
+        private bool _kimiStale = false;
+        private string _orUpdatedStr;
+        private bool _orStale = false;
+        private string _agyUpdatedStr;
+        private bool _agyStale = false;
 
         public bool IsClickThrough {
             get { return _clickThrough; }
@@ -208,17 +220,9 @@ namespace LlmLimitsOverlay {
             _barKimi5h = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 3), "Лимит 5h");
             kimiStack.Children.Add(_barKimi5h);
 
-            // Updated status inside Kimi
-            _txtUpdated = new TextBlock {
-                Text = "только что",
-                FontSize = 8.5,
-                FontWeight = FontWeights.Normal,
-                Foreground = OverlayTheme.MetaTextBrush,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 1, 0, 1),
-                FontFamily = OverlayTheme.OverlayFontFamily
-            };
-            kimiStack.Children.Add(_txtUpdated);
+            // Per-card updated status inside Kimi
+            _txtKimiUpdated = CreateUpdatedTextBlock();
+            kimiStack.Children.Add(_txtKimiUpdated);
 
             kimiBorder.Child = kimiStack;
             Grid.SetRow(kimiBorder, 0);
@@ -253,6 +257,10 @@ namespace LlmLimitsOverlay {
             orMetaGrid.Children.Add(_txtOrFreeDaily);
             orMetaGrid.Children.Add(_txtOrBalance);
             orStack.Children.Add(orMetaGrid);
+
+            // Per-card updated status inside OpenRouter
+            _txtOrUpdated = CreateUpdatedTextBlock();
+            orStack.Children.Add(_txtOrUpdated);
 
             orBorder.Child = orStack;
             Grid.SetRow(orBorder, 1);
@@ -301,6 +309,10 @@ namespace LlmLimitsOverlay {
             gcStack.Children.Add(_rowClaude5h);
             _barClaude5h = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 2), "Лимит 5h");
             gcStack.Children.Add(_barClaude5h);
+
+            // Per-card updated status inside Gemini+Claude/GPT (agy block)
+            _txtAgyUpdated = CreateUpdatedTextBlock();
+            gcStack.Children.Add(_txtAgyUpdated);
 
             geminiClaudeBorder.Child = gcStack;
             Grid.SetRow(geminiClaudeBorder, 2);
@@ -543,15 +555,34 @@ namespace LlmLimitsOverlay {
         private void OnFetchStateChanged(bool isFetching, string statusText) {
             if (_menuRefresh != null) _menuRefresh.IsEnabled = !isFetching;
             if (!string.IsNullOrEmpty(statusText)) {
-                _txtUpdated.Text = statusText;
-                _txtUpdated.Foreground = OverlayTheme.MetaTextBrush;
+                if (_txtKimiUpdated != null) {
+                    _txtKimiUpdated.Text = statusText;
+                    _txtKimiUpdated.Foreground = OverlayTheme.MetaTextBrush;
+                }
+                if (_txtOrUpdated != null) {
+                    _txtOrUpdated.Text = statusText;
+                    _txtOrUpdated.Foreground = OverlayTheme.MetaTextBrush;
+                }
+                if (_txtAgyUpdated != null) {
+                    _txtAgyUpdated.Text = statusText;
+                    _txtAgyUpdated.Foreground = OverlayTheme.MetaTextBrush;
+                }
             }
         }
 
         private void OnDataLoaded(QuotaSnapshot snapshot) {
             _lastSnapshot = snapshot;
-            _lastUpdatedStr = snapshot.LastUpdated;
-            _lastIsStale = (snapshot.Status != "online");
+
+            bool globalStale = (snapshot.Status != "online");
+
+            _kimiUpdatedStr = !string.IsNullOrEmpty(snapshot.Kimi.LastUpdated) ? snapshot.Kimi.LastUpdated : snapshot.LastUpdated;
+            _kimiStale = globalStale || snapshot.Kimi.Status == "stale";
+
+            _orUpdatedStr = !string.IsNullOrEmpty(snapshot.OpenRouter.LastUpdated) ? snapshot.OpenRouter.LastUpdated : snapshot.LastUpdated;
+            _orStale = globalStale || snapshot.OpenRouter.Status == "stale";
+
+            _agyUpdatedStr = !string.IsNullOrEmpty(snapshot.AgyLastUpdated) ? snapshot.AgyLastUpdated : snapshot.LastUpdated;
+            _agyStale = globalStale || snapshot.AgyStatus == "stale";
 
             UpdateRelativeTimeText();
 
@@ -639,11 +670,27 @@ namespace LlmLimitsOverlay {
         }
 
         private void UpdateRelativeTimeText() {
-            if (_txtUpdated != null && !string.IsNullOrEmpty(_lastUpdatedStr)) {
-                string txt = OverlayTheme.GetRelativeTimeText(_lastUpdatedStr, _lastIsStale);
-                _txtUpdated.Text = txt;
-                _txtUpdated.Foreground = _lastIsStale ? OverlayTheme.UpdatedStaleTextBrush : OverlayTheme.MetaTextBrush;
-            }
+            UpdateCardUpdatedLine(_txtKimiUpdated, _kimiUpdatedStr, _kimiStale);
+            UpdateCardUpdatedLine(_txtOrUpdated, _orUpdatedStr, _orStale);
+            UpdateCardUpdatedLine(_txtAgyUpdated, _agyUpdatedStr, _agyStale);
+        }
+
+        private static void UpdateCardUpdatedLine(TextBlock tb, string updatedStr, bool isStale) {
+            if (tb == null || string.IsNullOrEmpty(updatedStr)) return;
+            tb.Text = OverlayTheme.GetRelativeTimeText(updatedStr, isStale);
+            tb.Foreground = isStale ? OverlayTheme.UpdatedStaleTextBrush : OverlayTheme.MetaTextBrush;
+        }
+
+        private static TextBlock CreateUpdatedTextBlock() {
+            return new TextBlock {
+                Text = "только что",
+                FontSize = 8.5,
+                FontWeight = FontWeights.Normal,
+                Foreground = OverlayTheme.MetaTextBrush,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 1, 0, 1),
+                FontFamily = OverlayTheme.OverlayFontFamily
+            };
         }
 
         private void UpdateTrayTooltip() {

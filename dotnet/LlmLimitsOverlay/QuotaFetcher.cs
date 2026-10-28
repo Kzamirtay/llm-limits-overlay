@@ -17,6 +17,7 @@ namespace LlmLimitsOverlay {
         public object Raw { get; set; }
         public bool CacheHit { get; set; }
         public string Error { get; set; }
+        public string LastUpdated { get; set; }
     }
 
     public class QuotaFetcher {
@@ -223,8 +224,10 @@ namespace LlmLimitsOverlay {
                 // 1. Check disk / memory cache
                 object cachedRaw;
                 Dictionary<string, object> cachedData;
-                if (GetCachedAgyUsage(out cachedRaw, out cachedData)) {
+                double cacheTimestamp;
+                if (GetCachedAgyUsage(out cachedRaw, out cachedData, out cacheTimestamp)) {
                     var parsedCached = ParseQuotaData(cachedData ?? (cachedRaw as Dictionary<string, object>));
+                    string cachedIso = UnixTimeToLocalIso(cacheTimestamp);
                     var cachedFrag = new Dictionary<string, object>();
                     cachedFrag["status"] = "online";
                     cachedFrag["last_updated"] = nowIso;
@@ -239,7 +242,8 @@ namespace LlmLimitsOverlay {
                         Buckets = parsedCached,
                         Raw = cachedRaw,
                         CacheHit = true,
-                        Error = null
+                        Error = null,
+                        LastUpdated = !string.IsNullOrEmpty(cachedIso) ? cachedIso : nowIso
                     };
                 }
 
@@ -344,7 +348,8 @@ namespace LlmLimitsOverlay {
                     Buckets = parsedBuckets,
                     Raw = parsed,
                     CacheHit = false,
-                    Error = null
+                    Error = null,
+                    LastUpdated = nowIso
                 };
             } catch (Exception ex) {
                 Logger.Log("[agy] Exception in worker: " + ex.Message);
@@ -354,14 +359,20 @@ namespace LlmLimitsOverlay {
 
         private AgyWorkerResult FallbackAgy(string[] limitsPaths, string nowIso, string errMsg) {
             var prev = LoadCachedProvider("agy", limitsPaths);
+            // Last successful agy update time is preserved in the previous root
+            // payload (data.agy.last_updated); the fragment top-level timestamp
+            // reflects the failed attempt time, so it is only a last resort.
+            string prevSuccessTime = FindPrevAgySuccessTime(limitsPaths);
             string agyStatus;
             Dictionary<string, object> buckets;
             object rawPayload;
+            string prevLastUpdated = null;
 
             if (prev != null && prev.ContainsKey("buckets") && prev["buckets"] is Dictionary<string, object>) {
                 buckets = prev["buckets"] as Dictionary<string, object>;
                 rawPayload = prev.ContainsKey("raw") ? prev["raw"] : null;
                 agyStatus = "stale";
+                prevLastUpdated = SimpleJson.GetString(prev, "last_updated", null);
             } else {
                 buckets = GetDefaultAgyBuckets("unknown");
                 rawPayload = null;
@@ -383,8 +394,31 @@ namespace LlmLimitsOverlay {
                 Buckets = buckets,
                 Raw = rawPayload,
                 CacheHit = false,
-                Error = errMsg
+                Error = errMsg,
+                LastUpdated = !string.IsNullOrEmpty(prevSuccessTime)
+                    ? prevSuccessTime
+                    : (!string.IsNullOrEmpty(prevLastUpdated) ? prevLastUpdated : nowIso)
             };
+        }
+
+        private static string FindPrevAgySuccessTime(string[] limitsPaths) {
+            foreach (string p in limitsPaths) {
+                if (File.Exists(p)) {
+                    try {
+                        string raw = File.ReadAllText(p, Encoding.UTF8);
+                        var dict = SimpleJson.Deserialize(raw) as Dictionary<string, object>;
+                        if (dict != null) {
+                            var d = SimpleJson.GetObject(dict, "data");
+                            var agyMeta = d != null ? SimpleJson.GetObject(d, "agy") : null;
+                            if (agyMeta != null) {
+                                string ts = SimpleJson.GetString(agyMeta, "last_updated", null);
+                                if (!string.IsNullOrEmpty(ts)) return ts;
+                            }
+                        }
+                    } catch { }
+                }
+            }
+            return null;
         }
 
         // ---------------------------------------------------------------------
@@ -452,6 +486,7 @@ namespace LlmLimitsOverlay {
 
                     var res = new Dictionary<string, object>();
                     res["status"] = "online";
+                    res["last_updated"] = nowIso;
                     res["limit"] = limitNum;
                     res["usage"] = Math.Round(usage, 4);
                     res["limit_remaining"] = Math.Round(limitRemaining, 2);
@@ -570,6 +605,7 @@ namespace LlmLimitsOverlay {
 
                     var res = new Dictionary<string, object>();
                     res["status"] = "online";
+                    res["last_updated"] = nowIso;
 
                     var l5Dict = new Dictionary<string, object>();
                     l5Dict["used_ratio"] = Math.Round(frac5h, 4);
@@ -653,6 +689,12 @@ namespace LlmLimitsOverlay {
             mergedData["gemini_weekly"] = agyBuckets.ContainsKey("gemini_weekly") ? agyBuckets["gemini_weekly"] : null;
             mergedData["claude_5h"] = agyBuckets.ContainsKey("claude_5h") ? agyBuckets["claude_5h"] : null;
             mergedData["claude_weekly"] = agyBuckets.ContainsKey("claude_weekly") ? agyBuckets["claude_weekly"] : null;
+
+            var agyInfo = new Dictionary<string, object>();
+            agyInfo["status"] = agyStatus;
+            agyInfo["last_updated"] = (agyRes != null && !string.IsNullOrEmpty(agyRes.LastUpdated)) ? agyRes.LastUpdated : nowIso;
+            mergedData["agy"] = agyInfo;
+
             mergedData["openrouter"] = orRes;
             mergedData["kimi"] = kimiRes;
 
@@ -742,6 +784,7 @@ namespace LlmLimitsOverlay {
                     res["buckets"] = buckets;
                     res["raw"] = payload.ContainsKey("raw") ? payload["raw"] : null;
                     res["status"] = SimpleJson.GetString(payload, "status", "online");
+                    res["last_updated"] = SimpleJson.GetString(payload, "last_updated", "");
                     return res;
                 }
                 if (payload.ContainsKey("gemini_5h")) {
@@ -753,6 +796,7 @@ namespace LlmLimitsOverlay {
                     res["buckets"] = buckets;
                     res["raw"] = payload.ContainsKey("raw") ? payload["raw"] : null;
                     res["status"] = SimpleJson.GetString(payload, "status", "online");
+                    res["last_updated"] = SimpleJson.GetString(payload, "last_updated", "");
                     return res;
                 }
                 return null;
@@ -814,9 +858,19 @@ namespace LlmLimitsOverlay {
             return (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
         }
 
-        private static bool GetCachedAgyUsage(out object rawObj, out Dictionary<string, object> dataObj) {
+        private static string UnixTimeToLocalIso(double unixSeconds) {
+            try {
+                DateTime dt = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(unixSeconds).ToLocalTime();
+                return dt.ToString("yyyy-MM-dd HH:mm:ss");
+            } catch {
+                return null;
+            }
+        }
+
+        private static bool GetCachedAgyUsage(out object rawObj, out Dictionary<string, object> dataObj, out double cacheTimestamp) {
             rawObj = null;
             dataObj = null;
+            cacheTimestamp = 0;
 
             double ttl = GetQuotaCacheSeconds();
             double now = GetCurrentUnixTime();
@@ -828,6 +882,7 @@ namespace LlmLimitsOverlay {
                     if (age >= 0 && age < ttl) {
                         rawObj = _agyMemoryCacheRaw;
                         dataObj = _agyMemoryCacheData;
+                        cacheTimestamp = _agyMemoryCacheTimestamp;
                         Logger.Log(string.Format("[cache] agy /usage cache hit in-memory (age {0:F1}s <= {1:F0}s), agy.exe not respawned", age, ttl));
                         return true;
                     }
@@ -845,6 +900,7 @@ namespace LlmLimitsOverlay {
                             if (age >= 0 && age < ttl) {
                                 rawObj = cached.ContainsKey("raw") ? cached["raw"] : null;
                                 dataObj = SimpleJson.GetObject(cached, "data");
+                                cacheTimestamp = ts;
                                 _agyMemoryCacheRaw = rawObj;
                                 _agyMemoryCacheData = dataObj;
                                 _agyMemoryCacheTimestamp = ts;
@@ -1055,6 +1111,7 @@ namespace LlmLimitsOverlay {
         private static Dictionary<string, object> CreateDefaultOpenRouter(string status, string error) {
             var d = new Dictionary<string, object>();
             d["status"] = status;
+            d["last_updated"] = "";
             d["error"] = error ?? "OpenRouter not configured";
             d["limit"] = 0.0;
             d["usage"] = 0.0;
@@ -1073,6 +1130,7 @@ namespace LlmLimitsOverlay {
         private static Dictionary<string, object> CreateDefaultKimi(string status, string error) {
             var d = new Dictionary<string, object>();
             d["status"] = status;
+            d["last_updated"] = "";
             d["error"] = error ?? "Kimi not configured";
 
             var l5h = new Dictionary<string, object>();

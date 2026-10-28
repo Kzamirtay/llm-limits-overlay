@@ -128,6 +128,13 @@ namespace LlmLimitsOverlay {
             return "Лимит " + windowType + " • Сброс через " + ru.Trim();
         }
 
+        // Relative-time wording/format constants (single point of edit).
+        // Used by every per-card updated line in the overlay.
+        public const string RelativeTimeJustNow = "только что";
+        public const string RelativeTimeMinutesSuffix = " мин";
+        public const string RelativeTimeHoursSuffix = "ч";
+        public const string RelativeTimeStaleSuffix = " (stale)";
+
         public static string GetRelativeTimeText(string updatedStr, bool isStale) {
             if (string.IsNullOrEmpty(updatedStr)) {
                 return isStale ? "устарело" : "нет данных";
@@ -145,17 +152,17 @@ namespace LlmLimitsOverlay {
 
                 string baseText = "";
                 if (totalMinutes < 1) {
-                    baseText = "только что";
+                    baseText = RelativeTimeJustNow;
                 } else if (totalMinutes < 60) {
-                    baseText = totalMinutes + " мин";
+                    baseText = totalMinutes + RelativeTimeMinutesSuffix;
                 } else {
                     int hrs = totalMinutes / 60;
                     int mins = totalMinutes % 60;
-                    baseText = mins > 0 ? (hrs + "ч " + mins + "м") : (hrs + "ч");
+                    baseText = mins > 0 ? (hrs + RelativeTimeHoursSuffix + " " + mins + "м") : (hrs + RelativeTimeHoursSuffix);
                 }
 
                 if (isStale) {
-                    return baseText + " (stale)";
+                    return baseText + RelativeTimeStaleSuffix;
                 }
                 return baseText;
             } catch {

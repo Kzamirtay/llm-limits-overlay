@@ -16,6 +16,7 @@ namespace LlmLimitsOverlay {
 
     public class OpenRouterInfo {
         public string Status { get; set; }
+        public string LastUpdated { get; set; }
         public double Limit { get; set; }
         public double Usage { get; set; }
         public double LimitRemaining { get; set; }
@@ -28,6 +29,7 @@ namespace LlmLimitsOverlay {
 
         public OpenRouterInfo() {
             Status = "online";
+            LastUpdated = "";
             Limit = 0.0;
             Usage = 0.0;
             LimitRemaining = 0.0;
@@ -42,11 +44,13 @@ namespace LlmLimitsOverlay {
 
     public class KimiInfo {
         public string Status { get; set; }
+        public string LastUpdated { get; set; }
         public BucketInfo Limit5h { get; set; }
         public BucketInfo Limit7d { get; set; }
 
         public KimiInfo() {
             Status = "online";
+            LastUpdated = "";
             Limit5h = new BucketInfo();
             Limit7d = new BucketInfo();
         }
@@ -55,6 +59,8 @@ namespace LlmLimitsOverlay {
     public class QuotaSnapshot {
         public string Status { get; set; }
         public string LastUpdated { get; set; }
+        public string AgyStatus { get; set; }
+        public string AgyLastUpdated { get; set; }
         public BucketInfo Gemini5h { get; set; }
         public BucketInfo GeminiWeekly { get; set; }
         public BucketInfo Claude5h { get; set; }
@@ -65,6 +71,8 @@ namespace LlmLimitsOverlay {
         public QuotaSnapshot() {
             Status = "online";
             LastUpdated = "";
+            AgyStatus = "online";
+            AgyLastUpdated = "";
             Gemini5h = new BucketInfo();
             GeminiWeekly = new BucketInfo();
             Claude5h = new BucketInfo();
@@ -112,6 +120,7 @@ namespace LlmLimitsOverlay {
             if (orDict != null) {
                 var or = snap.OpenRouter;
                 or.Status = SimpleJson.GetString(orDict, "status", "online");
+                or.LastUpdated = SimpleJson.GetString(orDict, "last_updated", snap.LastUpdated);
                 or.Limit = SimpleJson.GetDouble(orDict, "limit", 0.0);
                 or.Usage = SimpleJson.GetDouble(orDict, "usage", 0.0);
                 or.LimitRemaining = orDict.ContainsKey("limit_remaining")
@@ -139,6 +148,7 @@ namespace LlmLimitsOverlay {
             if (kimiDict != null) {
                 var k = snap.Kimi;
                 k.Status = SimpleJson.GetString(kimiDict, "status", "online");
+                k.LastUpdated = SimpleJson.GetString(kimiDict, "last_updated", snap.LastUpdated);
 
                 var k5 = SimpleJson.GetObject(kimiDict, "limit_5h");
                 if (k5 != null) {
@@ -155,6 +165,16 @@ namespace LlmLimitsOverlay {
                     string reset = SimpleJson.GetString(kWk, "reset_in", "--");
                     k.Limit7d = new BucketInfo { Fraction = ratio, Percent = pct, ResetIn = reset };
                 }
+            }
+
+            // AgY card (Gemini + Claude/GPT) — single status/timestamp for the whole block
+            var agyMeta = SimpleJson.GetObject(data, "agy");
+            if (agyMeta != null) {
+                snap.AgyStatus = SimpleJson.GetString(agyMeta, "status", "online");
+                snap.AgyLastUpdated = SimpleJson.GetString(agyMeta, "last_updated", snap.LastUpdated);
+            } else {
+                snap.AgyStatus = snap.Status;
+                snap.AgyLastUpdated = snap.LastUpdated;
             }
 
             return snap;
