@@ -18,6 +18,9 @@ bin/
 obj/
 *.exe
 
+# Installer output
+dist/
+
 # Screenshots & media (only keep docs/screenshots/)
 *.png
 !docs/screenshots/*.png

@@ -280,6 +280,29 @@ dotnet\bin\LlmLimitsOverlay.exe
 ```
 Technical architecture details are documented in [dotnet/README.md](dotnet/README.md).
 
+#### 3. Windows Installer (v1.2.0+)
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-1.2.0.exe` (Inno Setup 6).
+
+**Features:**
+- Installs to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
+- Creates Start Menu shortcut (always); optional Desktop shortcut and optional autostart (HKCU Run).
+- Registers uninstall entry in "Apps & Features" / "Programs and Features".
+- **Preserves your `.env` file** on upgrade and uninstall (`onlyifdoesntexist`, `uninsneveruninstall`).
+- Closes any running overlay instance from the same install location before installing/updating.
+- Data files (`limits*.json`, `overlay.log`) are removed on uninstall; `.env` is kept.
+
+**Silent install (for automation):**
+```cmd
+LlmLimitsOverlay-Setup-1.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+```
+> [!NOTE]
+> **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.
+
+**Uninstall:** Use "Apps & Features" in Windows Settings, or run silently:
+```cmd
+"%LOCALAPPDATA%\LlmLimitsOverlay\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
 ---
 
 ## Diagnostics & Logs

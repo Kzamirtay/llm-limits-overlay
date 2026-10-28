@@ -280,6 +280,29 @@ dotnet\bin\LlmLimitsOverlay.exe
 ```
 Подробная техническая документация и архитектура порта описаны в [dotnet/README.md](dotnet/README.md).
 
+#### 3. Windows-установщик (v1.2.0+)
+Доступен per-user установщик: `LlmLimitsOverlay-Setup-1.2.0.exe` (Inno Setup 6).
+
+**Возможности:**
+- Устанавливается в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
+- Ярлык в меню Пуск (всегда); опционально — ярлык на Рабочем столе и автозапуск (HKCU Run).
+- Запись в «Приложения и компоненты» / «Программы и компоненты» для корректного удаления.
+- **Ваш `.env` сохраняется** при обновлении и удалении (`onlyifdoesntexist`, `uninsneveruninstall`).
+- Перед установкой/обновлением закрывает запущенный экземпляр оверлея из этой же папки.
+- При удалении удаляются файлы данных (`limits*.json`, `overlay.log`); `.env` остаётся.
+
+**Тихая установка (для автоматизации):**
+```cmd
+LlmLimitsOverlay-Setup-1.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+```
+> [!NOTE]
+> **Предупреждение SmartScreen**: установщик не подписан цифровой подписью (нет EV-сертификата). Windows SmartScreen покажет «Защита Windows» — нажмите «Подробнее» → «Всё равно запустить». Это нормально для open-source проектов без платного сертификата.
+
+**Удаление:** через «Приложения и компоненты» в Параметрах Windows, или тихо:
+```cmd
+"%LOCALAPPDATA%\LlmLimitsOverlay\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
 ---
 
 ## Диагностика и логи
