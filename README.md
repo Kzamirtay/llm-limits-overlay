@@ -27,12 +27,12 @@
 - **Monochrome Visual Indicators**: A unified graphite scale that gradually darkens as quota is consumed (from neutral gray to deep black), avoiding distracting traffic-light colors.
 - **Free Dragging & System Tray Control**:
   - Left-click and drag: Move the HUD to any preferred position on the screen.
-  - Right-click: Context menu for manual quota refresh, runtime environment switching, and exiting.
+  - Right-click: Context menu for manual quota refresh and exiting.
   - Windows System Tray icon: Single-click show/hide, comprehensive control menu, position reset, and tooltip with live percentages.
-- **Fast Native Polling**:
-  - Operates natively on Windows using local Python and the Antigravity CLI (`agy -p /usage --output-format json`).
-  - Watchdog timer: 6 seconds for native Windows Python, 30 seconds for WSL (configurable).
-  - Quota caching (300s) minimizes CLI overhead while keeping external APIs (OpenRouter, Kimi) fresh on each 60-second polling cycle.
+- **Fast Native Polling (v1.2.0+, no Python / WSL required)**:
+  - All quota fetches run **in-process** as concurrent async tasks — no subprocess spawning, no `wsl.exe`, no Python.
+  - Per-provider timeouts: HTTP 3.5 s for OpenRouter / Kimi; 8 s for `agy.exe`.
+  - Antigravity quota caching (300 s in `%TEMP%\llm_limits_agy_usage_cache.json`) keeps the `agy.exe` call rate minimal while OpenRouter and Kimi are refreshed on every 60-second polling cycle.
 
 ---
 
@@ -44,66 +44,76 @@ The overlay presents information in three logical vertical cards from top to bot
    - **Weekly Limit (7d)**: Time until quota reset (e.g., `3d 8h`), percentage consumed (`100%`), and visual progress gauge.
    - **5-Hour Limit (5h)**: Time until reset (`2h 41m`), percentage consumed (`8.9%`), and progress bar.
    - **Timestamp**: Subtle relative update time (`just now`, `4m ago`, `stale`) in the bottom-right corner, refreshed every 10 seconds.
-   - Source: Official endpoint `GET https://api.kimi.com/coding/v1/usages`.
+   - Source: `GET https://api.kimi.com/coding/v1/usages` (HTTP Bearer auth).
 
 2. **OPENROUTER** (Middle card):
    - **Key / Account Limit**: Time until calculated reset (`2d 13h`), percentage consumed (`3.7%`), and progress gauge.
-   - **Secondary Status Line**: Free tier daily requests used (`free: 0/1000`) and remaining credit balance (`rem. $9.63` / `ост. $9.63`).
-   - Source: Official endpoint `GET https://openrouter.ai/api/v1/key`.
+   - **Secondary Status Line**: Free tier daily requests used (`free: 0/1000`) and remaining credit balance (`rem. $9.63`).
+   - Source: `GET https://openrouter.ai/api/v1/key` (HTTP Bearer auth).
 
 3. **GEMINI + CLAUDE / GPT** (Bottom combined card):
    - Grouped into a single card separated by a subtle divider:
      - **GEMINI**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
      - **CLAUDE / GPT**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
-   - Source: Official Antigravity CLI (`agy -p /usage --output-format json`) or local Language Server fallback when running under WSL.
+   - Source: Native `agy.exe -p /usage --output-format json` (Antigravity CLI v1.4.9+).
 
 ---
 
 ## System Requirements
 
 - **OS**: Windows 10 or Windows 11 (64-bit) with .NET Framework 4.8 (included out of the box in Windows).
-- **Python**: Python 3.10+ on Windows (default). WSL is not required for standard usage.
-- **WSL 2** *(optional)*: Only required if explicitly choosing the `wsl` backend or when native Windows Python is unavailable in `auto` mode.
+- **Antigravity CLI**: `agy.exe` (v1.4.9+) installed and signed in (`agy auth login`). Resolved automatically from `PATH` or `%LOCALAPPDATA%\agy\bin\agy.exe`.
+- **No Python. No WSL.** Starting from v1.2.0 the overlay is fully self-contained.
 
 ---
 
-## Backend Environments
+## Architecture (v1.2.0+)
 
-The overlay supports three execution modes for the background quota worker script (`fetch_quota.py`):
+### In-Process Fetch
 
-1. **`auto`** *(default)*:
-   - Probes and uses the native Windows Python interpreter first.
-   - If native Python is not found, automatically falls back to WSL.
-2. **`windows`**:
-   - Runs exclusively via native Python on Windows. Calls to `wsl.exe` are completely bypassed.
-   - Displays `no python` in the status line if Python is not installed.
-3. **`wsl`**:
-   - Executes inside WSL. Automatically discovers an installed Linux distribution with `python3` (skipping system distros like `docker-desktop`).
-   - Displays `no wsl` in the status line if no compatible distribution is found.
+Since v1.2.0, quota fetching runs **entirely inside `LlmLimitsOverlay.exe`** with no external processes or scripts:
 
-### Switching Backends via Interface
-Right-click anywhere on the overlay window cards:
-- **Refresh** — Force an immediate data refresh.
-- **Environment**:
-  - `[x] Auto`
-  - `[ ] Windows (Native Python)`
-  - `[ ] WSL`
-- **Close** — Exit the application.
+| Provider | Transport | Timeout | Auth |
+|---|---|---|---|
+| OpenRouter | `HttpWebRequest GET https://openrouter.ai/api/v1/key` | 3.5 s | Bearer `OPENROUTER_API_KEY` from `.env` |
+| Kimi | `HttpWebRequest GET https://api.kimi.com/coding/v1/usages` | 3.5 s | Bearer `KIMI_API_KEY` from `.env` |
+| AGY (Gemini/Claude) | `Process.Start(agy.exe -p /usage --output-format json)` | 8 s | OAuth token pre-checked at `%USERPROFILE%\.gemini\antigravity-cli\antigravity-oauth-token` |
 
-Changing the backend immediately updates `overlay.config.json`, clears stale flags, and triggers a fresh background fetch.
+All three providers run in parallel via `Task.Run`. Each atomically writes its fragment (`limits.agy.json`, `limits.openrouter.json`, `limits.kimi.json`) as soon as it finishes, then a merge step assembles the final `limits.json`. If one provider fails or times out, its block is marked `stale` while the others remain `online`.
 
-### Concurrent Fetch Architecture & Error Isolation
-`fetch_quota.py` queries all providers concurrently in isolated threads:
-- **Antigravity CLI (Gemini / Claude)** (8s timeout)
-- **OpenRouter** (3.5s timeout)
-- **Kimi** (3.5s timeout)
+### OAuth Anti-Popup Guard
 
-Each provider atomically writes its own fragment as soon as it completes (`limits.agy.json`, `limits.openrouter.json`, `limits.kimi.json`).
-If a provider fails or times out, its block is marked with status `stale` while preserving the last known quota metrics; the remaining providers continue updating normally (`online`). The overall status in `limits.json` remains `online` as long as at least one provider is operational.
+Before spawning `agy.exe`, the overlay checks that `%USERPROFILE%\.gemini\antigravity-cli\antigravity-oauth-token` exists and is non-empty. If the token is missing, `agy.exe` is skipped entirely (returning `stale`) — preventing an unwanted browser OAuth popup.
 
-The script also supports selective updates for an individual provider via the `--provider <kimi|openrouter|agy>` flag:
-```bash
-python3 fetch_quota.py --provider kimi limits.json
+### AGY Cache
+
+The raw `agy.exe` JSON response is cached for 300 seconds in `%TEMP%\llm_limits_agy_usage_cache.json`. Within the TTL, `agy.exe` is never re-spawned; the cache is shared across process restarts.
+
+### Error Isolation
+
+If `agy.exe` hangs or is not found → only the Gemini/Claude card shows `stale`; OpenRouter and Kimi continue updating normally. The overall status in `limits.json` stays `online` as long as at least one provider is `online`.
+
+### `limits.json` Format
+
+The format is unchanged from v1.1.x. The root object:
+
+```json
+{
+  "status": "online",
+  "last_updated": "2026-10-28 15:30:00",
+  "data": {
+    "gemini_5h":     { "used_fraction": 0.12, "used_percent": 12.0, "reset_in": "3h 22m", ... },
+    "gemini_weekly": { ... },
+    "claude_5h":     { ... },
+    "claude_weekly": { ... },
+    "openrouter": { "status": "online", "limit": 20.0, "usage": 0.74, "limit_remaining": 19.26, ... },
+    "kimi": {
+      "status": "online",
+      "limit_5h": { "used_ratio": 0.089, "used_percent": 8.9, "reset_in": "2h 41m", ... },
+      "limit_7d": { ... }
+    }
+  }
+}
 ```
 
 ---
@@ -120,7 +130,6 @@ The application includes an icon in the Windows Notification Area (System Tray),
 - **Show Overlay / Hide Overlay** — Toggles window visibility while maintaining coordinates.
 - *Separator*
 - **Refresh Quotas** — Forces an immediate API query (disabled while a query is in progress).
-- **Environment** — Interpreter selection submenu (`Auto`, `Windows (Native Python)`, `WSL`), synchronized with the window context menu.
 - **Click-Through** — Toggles mouse click-through transparency mode.
 - *Separator*
 - **Reset Position** — Restores the HUD to its default docking spot in the bottom-right corner above the taskbar.
@@ -164,9 +173,7 @@ The configuration file is automatically created next to the executable if not pr
 
 ```json
 {
-  "backend": "windows",
-  "pythonPath": "",
-  "wslDistro": "",
+  "backend": "native",
   "timeoutSeconds": 0,
   "testHooks": false,
   "clickThrough": true,
@@ -174,24 +181,16 @@ The configuration file is automatically created next to the executable if not pr
 }
 ```
 
-- `backend`: Execution mode (`auto`, `windows`, `wsl`).
-- `pythonPath`: Explicit path to a Python executable (useful for dedicated virtual environments).
-- `wslDistro`: Explicit WSL distribution name (if omitted, auto-discovered).
-- `timeoutSeconds`: Watchdog timeout override in seconds (0 uses defaults: 6s for Windows, 30s for WSL).
-- `testHooks`: Enables programmatic control via `.tray-action` (default `false`).
+- `backend`: Always `"native"` since v1.2.0 (Python/WSL removed). Legacy values `auto`/`windows`/`wsl` are silently normalized.
+- `timeoutSeconds`: Overall fetch budget in seconds (0 = default 10 s).
+- `testHooks`: Enables programmatic control via `.tray-action` file (default `false`).
 - `clickThrough`: Startup click-through state (default `true`). Set to `false` for standard interactive mode.
 - `clickThroughHotkey`: Global shortcut for toggling click-through (default `"Ctrl+Alt+L"`).
 
 ### Environment Variables
 
-Settings priority: **Environment Variable → `overlay.config.json` → Built-in Default**.
-
-- `LLM_LIMITS_BACKEND`: Backend mode (`auto`, `windows`, `wsl`).
-- `LLM_LIMITS_PYTHON`: Explicit path to the Windows Python binary.
 - `LLM_LIMITS_AGY_BIN`: Explicit path to `agy.exe`.
 - `LLM_LIMITS_QUOTA_CACHE_SECONDS`: Cache duration for Antigravity quota calls (default `300`).
-- `LLM_LIMITS_WSL_DISTRO` / `AGY_WSL_DISTRO`: Target WSL distribution (e.g., `Ubuntu-24.04`).
-- `LLM_LIMITS_WSL_SCRIPT` / `AGY_WSL_SCRIPT`: Target script path inside WSL.
 - `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: Output path for the cached quota JSON file.
 
 ---
@@ -200,25 +199,22 @@ Settings priority: **Environment Variable → `overlay.config.json` → Built-in
 
 To display OpenRouter and Kimi quota metrics, the overlay requires valid API keys.
 
-### Single Source of Truth
-API keys are loaded **exclusively from one location** — the local `.env` file located in the root repository folder next to `fetch_quota.py` (`<repo>\.env`).
+### Key Loading Order
+API keys are read from the `.env` file located **next to `LlmLimitsOverlay.exe`** (highest priority), with fallback to process environment variables.
 
 > [!IMPORTANT]
-> **Operating system environment variables (`os.environ`), `HERMES_ENV_PATH`, `~/.hermes/.env`, the Windows Registry, and WSL home directories are intentionally NOT read**, eliminating ambiguous behavior and accidental key leakage.
+> Keys are **never** written to `overlay.log`, `limits.json`, or any cache file.
 
 ### Example `.env` File
 A template is provided in the repository as [.env.example](.env.example):
 
 ```env
 # LLM Limits Overlay - API Key Configuration
-# Keys are read EXCLUSIVELY from the .env file in the root directory (<repo>\.env).
-# OS environment variables (os.environ), HERMES_ENV_PATH, and ~/.hermes/.env are intentionally ignored.
-
 OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxx
 KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-The built-in parser (pure Python standard library, zero third-party dependencies) supports:
+The built-in C# parser supports:
 - UTF-8 with or without BOM;
 - Both CRLF (Windows) and LF (Linux) line endings;
 - Blank lines and comments starting with `#`;
@@ -237,27 +233,25 @@ The built-in parser (pure Python standard library, zero third-party dependencies
 The primary and only method for running the overlay is the compiled executable **`LlmLimitsOverlay.exe`**.
 
 > [!NOTE]
-> **The PowerShell version has been removed from master; it remains accessible in tag and release [v1.0.0](https://github.com/Kzamirtay/llm-limits-overlay/releases/tag/v1.0.0).** Starting with version v1.1.0, the project runs exclusively as a standalone native C# application (.NET Framework 4.8 / WPF).
+> **The PowerShell version has been removed from master; it remains accessible in tag and release [v1.0.0](https://github.com/Kzamirtay/llm-limits-overlay/releases/tag/v1.0.0).** Starting with version v1.1.0, the project runs exclusively as a standalone native C# application (.NET Framework 4.8 / WPF). Since v1.2.0, Python and WSL are no longer required.
 
 ### Runtime Directory Requirements
 The following files must be located in the same directory as `LlmLimitsOverlay.exe`:
-- `fetch_quota.py` — Python quota fetcher script (Antigravity CLI / OpenRouter / Kimi);
 - `assets/app.ico` — Application icon for the HUD and system tray;
 - `overlay.config.json` — Configuration file (automatically generated if missing);
-- `.env` — API key configuration file (`OPENROUTER_API_KEY`, `KIMI_API_KEY`);
-- Python 3 (3.10+) installed on Windows for native quota retrieval.
+- `.env` — API key configuration file (`OPENROUTER_API_KEY`, `KIMI_API_KEY`).
 
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download `LlmLimitsOverlay-v1.1.1-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download the latest `LlmLimitsOverlay-vX.Y.Z-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
-4. Launch `LlmLimitsOverlay.exe` by double-clicking it in Windows Explorer or from the command line:
+4. Ensure `agy.exe` is installed and you are signed in (`agy auth login`).
+5. Launch `LlmLimitsOverlay.exe` by double-clicking it in Windows Explorer or from the command line:
    ```cmd
    LlmLimitsOverlay.exe
    ```
-   (or `.\dotnet\bin\LlmLimitsOverlay.exe` during local development from the repository root).
    The application starts cleanly as a Windows GUI subsystem process (`/target:winexe`) without console flashes.
 
 #### 2. Building from Source
@@ -275,16 +269,17 @@ Technical architecture details are documented in [dotnet/README.md](dotnet/READM
 
 ## Diagnostics & Logs
 
-Startup sequences, interpreter discovery, process IDs, query results, and errors are logged to `overlay.log` in the application directory:
+Startup sequences, fetch results, cache hits, and errors are logged to `overlay.log` in the application directory:
 
 ```
-[2026-10-25 00:11:18] === LLM Limits Overlay Starting (PID=21240) ===
-[2026-10-25 00:11:19] Resolved backend: 'auto' (source: default)
-[2026-10-25 00:11:20] Starting async fetch via native Python (C:\...\python.exe) [timeout 6s]...
-[2026-10-25 00:11:20] Spawned refresh process (PID=28780, cmd=python.exe "...\fetch_quota.py" "...\limits.json")
-[2026-10-25 00:11:20] Async refresh process finished (PID=28780, exitCode=0).
-[2026-10-25 00:11:21] Cache loaded successfully from ...\limits.json (status: online).
+[2026-10-28 15:30:00] === LLM Limits Overlay Starting (PID=12345) ===
+[2026-10-28 15:30:00] Cache loaded successfully from ...\limits.json (status: online).
+[2026-10-28 15:30:00] Starting async native refresh at 2026-10-28 15:30:00...
+[2026-10-28 15:30:01] [cache] agy /usage cache hit (age 45.3s <= 300s), agy.exe not respawned
+[2026-10-28 15:30:01] Native refresh finished (agy: online, openrouter: online, kimi: online -> root: online).
 ```
+
+No `Spawned refresh process` or `exitCode` lines appear — fetching is in-process.
 
 ---
 
@@ -296,16 +291,12 @@ llm-limits-overlay/
 │   └── app.ico                  # Application icon (multi-resolution Win32 icon)
 ├── docs/
 │   └── screenshots/
-│       ├── cs-version.png       # Native C# version screenshot
 │       ├── dark.png             # Overlay on dark background
-│       ├── light.png            # Overlay on light background
-│       └── ps-version.png       # Legacy PowerShell version screenshot (v1.0.0)
+│       └── light.png            # Overlay on light background
 ├── dotnet/                      # C# source code (.NET Framework 4.8 / WPF)
 │   ├── LlmLimitsOverlay/        # C# source files (.cs)
 │   ├── build.cmd                # Standalone build script via csc.exe (no external SDK required)
 │   └── README.md                # Architecture documentation
-├── fetch_quota.py               # Quota fetcher script (Antigravity CLI / OpenRouter / Kimi)
-├── LlmLimitsOverlay.exe         # Compiled native overlay executable
 ├── overlay.config.json          # Configuration file (auto-generated if missing)
 ├── .env.example                 # Template for API keys (OpenRouter, Kimi)
 ├── .gitignore                   # Git ignore patterns for caches, logs, and local state
