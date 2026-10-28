@@ -498,7 +498,7 @@ namespace LlmLimitsOverlay {
                     res["level"] = level;
                     res["free_daily_used"] = freeUsed;
                     res["free_daily_limit"] = freeLimit;
-                    res["label"] = SimpleJson.GetString(data, "label", "");
+                    res["label"] = MaskOpenRouterLabel(SimpleJson.GetString(data, "label", ""));
 
                     SaveProviderFragment("openrouter", WrapFragment(res, nowIso), limitsPaths);
                     return res;
@@ -1061,6 +1061,28 @@ namespace LlmLimitsOverlay {
         // ---------------------------------------------------------------------
         // Format & Default Helpers
         // ---------------------------------------------------------------------
+        private static bool ContainsCyrillic(string s) {
+            if (string.IsNullOrEmpty(s)) return false;
+            foreach (char c in s) {
+                if (c >= '\u0400' && c <= '\u04FF') return true;
+            }
+            return false;
+        }
+
+        // OpenRouter returns the key itself in data.label when the key has no
+        // human-readable name. Never persist or log a raw key: mask anything
+        // that looks like one (sk- prefix, or >24 chars without spaces/letters
+        // of a natural label), keep friendly names ("My key") untouched.
+        private static string MaskOpenRouterLabel(string label) {
+            if (string.IsNullOrEmpty(label)) return "";
+            string t = label.Trim();
+            bool looksLikeKey = t.StartsWith("sk-", StringComparison.OrdinalIgnoreCase)
+                || (t.Length > 24 && t.IndexOf(' ') == -1 && !ContainsCyrillic(t));
+            if (!looksLikeKey) return label;
+            if (t.Length <= 10) return "unnamed";
+            return t.Substring(0, 6) + "..." + t.Substring(t.Length - 4);
+        }
+
         public static string FormatTimeDiff(string targetIso) {
             if (string.IsNullOrEmpty(targetIso)) return "N/A";
             DateTime targetUtc;

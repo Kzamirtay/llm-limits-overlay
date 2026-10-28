@@ -218,6 +218,7 @@ API keys are read from the `.env` file located **next to `LlmLimitsOverlay.exe`*
 
 > [!IMPORTANT]
 > Keys are **never** written to `overlay.log`, `limits.json`, or any cache file.
+> OpenRouter returns the key itself in the `label` field when it has no name — the overlay detects key-looking values and stores a masked form (`sk-or-...XXXX`) instead, so raw keys never reach the disk.
 
 ### Example `.env` File
 A template is provided in the repository as [.env.example](.env.example):
