@@ -19,6 +19,9 @@ import urllib.request
 from datetime import datetime, timezone
 
 HTTP_TIMEOUT_SECONDS = 3.5
+# Таймаут на один запуск agy CLI: agy бывает зависшим (60+ с «context canceled»),
+# а оверлей убивает fetch через 30 с — поэтому бюджет на agy должен быть заметно меньше.
+AGY_TIMEOUT_SECONDS = 8
 _MEMORY_CACHE = None
 
 def get_shared_limits_paths():
@@ -594,7 +597,7 @@ def fetch_agy_quota():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=60,
+            timeout=AGY_TIMEOUT_SECONDS,
             creationflags=creationflags
         )
     except subprocess.TimeoutExpired:
