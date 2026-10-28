@@ -5,6 +5,7 @@
 # Data cache and runtime logs
 limits.json
 limits.json.tmp
+limits.*.json
 overlay.log
 .tray-action
 .env

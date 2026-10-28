@@ -92,6 +92,20 @@ Right-click anywhere on the overlay window cards:
 
 Changing the backend immediately updates `overlay.config.json`, clears stale flags, and triggers a fresh background fetch.
 
+### Concurrent Fetch Architecture & Error Isolation
+`fetch_quota.py` queries all providers concurrently in isolated threads:
+- **Antigravity CLI (Gemini / Claude)** (8s timeout)
+- **OpenRouter** (3.5s timeout)
+- **Kimi** (3.5s timeout)
+
+Each provider atomically writes its own fragment as soon as it completes (`limits.agy.json`, `limits.openrouter.json`, `limits.kimi.json`).
+If a provider fails or times out, its block is marked with status `stale` while preserving the last known quota metrics; the remaining providers continue updating normally (`online`). The overall status in `limits.json` remains `online` as long as at least one provider is operational.
+
+The script also supports selective updates for an individual provider via the `--provider <kimi|openrouter|agy>` flag:
+```bash
+python3 fetch_quota.py --provider kimi limits.json
+```
+
 ---
 
 ## System Tray Icon

@@ -14,6 +14,7 @@ import json
 import time
 import shutil
 import tempfile
+import threading
 import subprocess
 import urllib.request
 from datetime import datetime, timezone
@@ -27,9 +28,12 @@ _MEMORY_CACHE = None
 def get_shared_limits_paths():
     """Returns list of paths where limits.json should be written/read, fully dynamic without hardcoded paths."""
     paths = []
-    # 1. Command-line argument if provided
-    if len(sys.argv) > 1 and sys.argv[1].endswith(".json"):
-        paths.append(os.path.abspath(sys.argv[1]))
+    # 1. Command-line arguments if provided
+    for arg in sys.argv[1:]:
+        if arg.endswith(".json") and not arg.startswith("--"):
+            candidate = os.path.abspath(arg)
+            if candidate not in paths:
+                paths.append(candidate)
     # 2. Environment variable overrides
     for env_key in ["LLM_LIMITS_JSON", "AGY_LIMITS_JSON"]:
         val = os.environ.get(env_key, "").strip()
@@ -574,6 +578,7 @@ def fetch_agy_quota():
         if sys.platform.startswith("linux") or os.path.isdir("/proc"):
             proc_resp, proc_addr = query_live_quota_proc()
             if proc_resp:
+                save_cached_agy_usage(proc_resp, proc_resp)
                 return proc_resp, proc_resp, None, False
         return None, None, "missing agy (not found in LLM_LIMITS_AGY_BIN, PATH, or AppData)", False
 
@@ -604,12 +609,14 @@ def fetch_agy_quota():
         if sys.platform.startswith("linux") or os.path.isdir("/proc"):
             proc_resp, proc_addr = query_live_quota_proc()
             if proc_resp:
+                save_cached_agy_usage(proc_resp, proc_resp)
                 return proc_resp, proc_resp, None, False
         return None, None, "timeout after 60s executing agy", False
     except Exception as e:
         if sys.platform.startswith("linux") or os.path.isdir("/proc"):
             proc_resp, proc_addr = query_live_quota_proc()
             if proc_resp:
+                save_cached_agy_usage(proc_resp, proc_resp)
                 return proc_resp, proc_resp, None, False
         return None, None, f"failed to spawn agy: {e}", False
 
@@ -626,6 +633,7 @@ def fetch_agy_quota():
         if sys.platform.startswith("linux") or os.path.isdir("/proc"):
             proc_resp, proc_addr = query_live_quota_proc()
             if proc_resp:
+                save_cached_agy_usage(proc_resp, proc_resp)
                 return proc_resp, proc_resp, None, False
         return None, None, err, False
 
@@ -634,6 +642,7 @@ def fetch_agy_quota():
         if sys.platform.startswith("linux") or os.path.isdir("/proc"):
             proc_resp, proc_addr = query_live_quota_proc()
             if proc_resp:
+                save_cached_agy_usage(proc_resp, proc_resp)
                 return proc_resp, proc_resp, None, False
         return None, None, "parse failed: invalid JSON output from agy", False
 
@@ -748,29 +757,184 @@ def parse_quota_data(resp):
 
     return result
 
-def main():
-    simulate_offline = "--mock-offline" in sys.argv
-    simulate_delay = 0
-    for arg in sys.argv:
-        if arg.startswith("--delay="):
-            simulate_delay = float(arg.split("=")[1])
+# ------------------------------------------------------------------------------
+# Per-Provider Fragments & Independent Concurrent Fetch
+# ------------------------------------------------------------------------------
 
-    if simulate_delay > 0:
-        time.sleep(simulate_delay)
+def get_fragment_path(limits_path, provider):
+    """
+    Derives fragment path next to the target limits.json.
+    e.g. /path/to/limits.json -> /path/to/limits.kimi.json
+    """
+    dirname = os.path.dirname(os.path.abspath(limits_path))
+    basename = os.path.basename(limits_path)
+    if basename.endswith(".json"):
+        stem = basename[:-5]
+        frag_name = f"{stem}.{provider}.json"
+    else:
+        frag_name = f"{basename}.{provider}.json"
+    return os.path.join(dirname, frag_name)
 
-    now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def write_atomic_json(target_path, data_obj):
+    """Atomically writes JSON object to target_path using a temporary file and replace."""
+    try:
+        target_abs = os.path.abspath(target_path)
+        os.makedirs(os.path.dirname(target_abs), exist_ok=True)
+        tmp_path = target_abs + ".tmp"
+        json_str = json.dumps(data_obj, indent=2, ensure_ascii=False)
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(json_str)
+        os.replace(tmp_path, target_abs)
+        return True
+    except Exception as e:
+        sys.stderr.write(f"[write_atomic_json] Error writing {target_path}: {e}\n")
+        return False
 
-    # Fallback cache loader helper
-    last_cache = None
-    for path in get_shared_limits_paths():
-        if os.path.exists(path):
+def save_provider_fragment(provider, fragment_dict, limits_paths):
+    """Saves a single provider's fragment atomically to all target paths."""
+    for path in limits_paths:
+        frag_path = get_fragment_path(path, provider)
+        write_atomic_json(frag_path, fragment_dict)
+
+def extract_provider_from_payload(provider, payload):
+    """Extracts provider-specific dictionary from a fragment or root limits.json."""
+    if not isinstance(payload, dict):
+        return None
+
+    if provider == "kimi":
+        data_block = payload.get("data")
+        if isinstance(data_block, dict) and "kimi" in data_block:
+            return data_block["kimi"]
+        if isinstance(data_block, dict) and "limit_5h" in data_block:
+            return data_block
+        if "kimi" in payload and isinstance(payload["kimi"], dict):
+            return payload["kimi"]
+        if "limit_5h" in payload:
+            return {k: v for k, v in payload.items() if k not in ("data", "last_updated") or k == "status"}
+        return None
+
+    elif provider == "openrouter":
+        data_block = payload.get("data")
+        if isinstance(data_block, dict) and "openrouter" in data_block:
+            return data_block["openrouter"]
+        if isinstance(data_block, dict) and ("limit" in data_block or "usage" in data_block):
+            return data_block
+        if "openrouter" in payload and isinstance(payload["openrouter"], dict):
+            return payload["openrouter"]
+        if "limit" in payload or "usage" in payload:
+            return {k: v for k, v in payload.items() if k not in ("data", "last_updated") or k == "status"}
+        return None
+
+    elif provider == "agy":
+        data_block = payload.get("data")
+        if isinstance(data_block, dict) and "gemini_5h" in data_block:
+            buckets = {k: v for k, v in data_block.items() if k in ("gemini_5h", "gemini_weekly", "claude_5h", "claude_weekly")}
+            return {
+                "buckets": buckets,
+                "raw": payload.get("raw"),
+                "status": payload.get("status", "online")
+            }
+        if "gemini_5h" in payload:
+            buckets = {k: v for k, v in payload.items() if k in ("gemini_5h", "gemini_weekly", "claude_5h", "claude_weekly")}
+            return {
+                "buckets": buckets,
+                "raw": payload.get("raw"),
+                "status": payload.get("status", "online")
+            }
+        return None
+
+    return None
+
+def load_cached_provider(provider, limits_paths):
+    """
+    Attempts to load cached provider data from limits.<provider>.json fragment,
+    falling back to existing limits.json.
+    """
+    # 1. Check per-provider fragment
+    for path in limits_paths:
+        frag_path = get_fragment_path(path, provider)
+        if os.path.isfile(frag_path):
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    last_cache = json.load(f)
-                break
+                with open(frag_path, "r", encoding="utf-8") as f:
+                    frag = json.load(f)
+                if isinstance(frag, dict):
+                    extracted = extract_provider_from_payload(provider, frag)
+                    if extracted:
+                        return extracted
             except Exception:
                 pass
 
+    # 2. Check unified limits.json
+    for path in limits_paths:
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    root = json.load(f)
+                if isinstance(root, dict):
+                    extracted = extract_provider_from_payload(provider, root)
+                    if extracted:
+                        return extracted
+            except Exception:
+                pass
+
+    return None
+
+def get_default_agy_buckets(level="unknown"):
+    default_item = {
+        "percent": 100.0,
+        "fraction": 1.0,
+        "used_percent": 0.0,
+        "used_fraction": 0.0,
+        "reset_in": "N/A",
+        "reset_time": "",
+        "level": level
+    }
+    return {
+        "gemini_5h": dict(default_item),
+        "gemini_weekly": dict(default_item),
+        "claude_5h": dict(default_item),
+        "claude_weekly": dict(default_item),
+    }
+
+def get_default_openrouter(status="disabled", error=None):
+    return {
+        "status": status,
+        "error": error or "OpenRouter not configured",
+        "limit": 0.0,
+        "usage": 0.0,
+        "limit_remaining": 0.0,
+        "used_percent": 0.0,
+        "used_fraction": 0.0,
+        "reset_in": "--",
+        "limit_reset": "monthly",
+        "resets_at": "",
+        "level": "unknown",
+        "free_daily_used": 0,
+        "free_daily_limit": 1000
+    }
+
+def get_default_kimi(status="disabled", error=None):
+    return {
+        "status": status,
+        "error": error or "Kimi not configured",
+        "limit_5h": {
+            "used_ratio": 0.0,
+            "used_percent": 0.0,
+            "reset_in": "--",
+            "reset_time": "",
+            "level": "unknown"
+        },
+        "limit_7d": {
+            "used_ratio": 0.0,
+            "used_percent": 0.0,
+            "reset_in": "--",
+            "reset_time": "",
+            "level": "unknown"
+        }
+    }
+
+def fetch_worker_agy(simulate_offline, limits_paths, now_iso):
+    """Fetches Antigravity (Gemini/Claude) quota, saves fragment, returns result dict."""
     if simulate_offline:
         data, raw, err_msg, is_cached = None, None, "offline (simulated)", False
     else:
@@ -778,84 +942,328 @@ def main():
 
     if data:
         parsed = parse_quota_data(data or raw)
-        payload = {
-            "status": "online",
-            "last_updated": now_iso,
-            "ls_address": None,
-            "data": parsed,
-            "raw": raw
-        }
-        if is_cached:
-            payload["cache_hit"] = True
+        agy_status = "online"
+        raw_payload = raw
     else:
-        if last_cache and "data" in last_cache:
-            data_buckets = {
-                k: v for k, v in last_cache["data"].items()
-                if k in ["gemini_5h", "gemini_weekly", "claude_5h", "claude_weekly"]
-            }
+        prev = load_cached_provider("agy", limits_paths)
+        if prev and isinstance(prev, dict) and "buckets" in prev:
+            parsed = {k: dict(v) for k, v in prev["buckets"].items()}
+            raw_payload = prev.get("raw")
+            agy_status = "stale"
         else:
-            default_item = {
-                "percent": 100.0,
-                "fraction": 1.0,
-                "used_percent": 0.0,
-                "used_fraction": 0.0,
-                "reset_in": "N/A",
-                "reset_time": "",
-                "level": "unknown"
-            }
-            data_buckets = {
-                "gemini_5h": dict(default_item),
-                "gemini_weekly": dict(default_item),
-                "claude_5h": dict(default_item),
-                "claude_weekly": dict(default_item),
-            }
+            parsed = get_default_agy_buckets(level="unknown")
+            raw_payload = None
+            agy_status = "error"
 
-        payload = {
-            "status": "error",
-            "error": err_msg or "Failed to query quota",
-            "last_updated": now_iso,
-            "ls_address": None,
-            "data": data_buckets,
-            "raw": None
-        }
+    fragment = {
+        "status": agy_status,
+        "last_updated": now_iso,
+        "data": parsed,
+        "raw": raw_payload,
+        **parsed
+    }
+    if is_cached:
+        fragment["cache_hit"] = True
+    if err_msg:
+        fragment["error"] = err_msg
 
-    # Query OpenRouter quota and attach
-    openrouter_data = query_openrouter_quota()
-    if openrouter_data.get("status") == "error" and last_cache:
-        cached_or = last_cache.get("data", {}).get("openrouter") or last_cache.get("openrouter")
-        if cached_or and cached_or.get("status") in ("online", "stale"):
-            cached_or = dict(cached_or)
-            cached_or["status"] = "stale"
-            openrouter_data = cached_or
+    save_provider_fragment("agy", fragment, limits_paths)
+    return {
+        "status": agy_status,
+        "buckets": parsed,
+        "raw": raw_payload,
+        "cache_hit": is_cached,
+        "error": err_msg
+    }
 
-    payload["data"]["openrouter"] = openrouter_data
-    payload["openrouter"] = openrouter_data
+def fetch_worker_openrouter(mock_offline, limits_paths, now_iso):
+    """Fetches OpenRouter quota, saves fragment, returns result dict."""
+    if mock_offline:
+        or_data = get_default_openrouter(status="error", error="OpenRouter offline (mocked)")
+    else:
+        or_data = query_openrouter_quota()
 
-    # Query Kimi quota and attach
-    kimi_data = query_kimi_quota()
-    if kimi_data.get("status") == "error" and last_cache:
-        cached_kimi = last_cache.get("data", {}).get("kimi") or last_cache.get("kimi")
-        if cached_kimi and cached_kimi.get("status") in ("online", "stale"):
-            cached_kimi = dict(cached_kimi)
-            cached_kimi["status"] = "stale"
-            kimi_data = cached_kimi
+    if or_data.get("status") == "error":
+        prev = load_cached_provider("openrouter", limits_paths)
+        if prev and isinstance(prev, dict) and prev.get("status") in ("online", "stale"):
+            prev_stale = dict(prev)
+            prev_stale["status"] = "stale"
+            or_data = prev_stale
 
-    payload["data"]["kimi"] = kimi_data
-    payload["kimi"] = kimi_data
+    or_status = or_data.get("status", "unknown")
+    fragment = {
+        "status": or_status,
+        "last_updated": now_iso,
+        "data": or_data,
+        **or_data
+    }
 
-    # Atomic write to shared destinations
+    save_provider_fragment("openrouter", fragment, limits_paths)
+    return or_data
+
+def fetch_worker_kimi(mock_offline, limits_paths, now_iso):
+    """Fetches Kimi quota, saves fragment, returns result dict."""
+    if mock_offline:
+        kimi_data = get_default_kimi(status="error", error="Kimi offline (mocked)")
+    else:
+        kimi_data = query_kimi_quota()
+
+    if kimi_data.get("status") == "error":
+        prev = load_cached_provider("kimi", limits_paths)
+        if prev and isinstance(prev, dict) and prev.get("status") in ("online", "stale"):
+            prev_stale = dict(prev)
+            prev_stale["status"] = "stale"
+            kimi_data = prev_stale
+
+    kimi_status = kimi_data.get("status", "unknown")
+    fragment = {
+        "status": kimi_status,
+        "last_updated": now_iso,
+        "data": kimi_data,
+        **kimi_data
+    }
+
+    save_provider_fragment("kimi", fragment, limits_paths)
+    return kimi_data
+
+def assemble_and_save_limits(limits_paths, now_iso, agy_res, or_res, kimi_res):
+    """
+    Merges provider fragments/results into the unified limits.json.
+    Root status: 'online' if at least one provider is online; 'error' only if all failed.
+    """
+    agy_buckets = agy_res.get("buckets", get_default_agy_buckets())
+    agy_raw = agy_res.get("raw")
+    agy_status = agy_res.get("status", "unknown")
+    agy_cache_hit = agy_res.get("cache_hit", False)
+
+    or_data = or_res
+    or_status = or_data.get("status", "unknown")
+
+    kimi_data = kimi_res
+    kimi_status = kimi_data.get("status", "unknown")
+
+    # Compute root status
+    statuses = [agy_status, or_status, kimi_status]
+    if "online" in statuses:
+        root_status = "online"
+    elif all(s == "error" for s in statuses):
+        root_status = "error"
+    elif "stale" in statuses:
+        root_status = "stale"
+    else:
+        root_status = "error" if all(s in ("error", None) for s in statuses) else "online"
+
+    merged_data = {
+        "gemini_5h": agy_buckets.get("gemini_5h"),
+        "gemini_weekly": agy_buckets.get("gemini_weekly"),
+        "claude_5h": agy_buckets.get("claude_5h"),
+        "claude_weekly": agy_buckets.get("claude_weekly"),
+        "openrouter": or_data,
+        "kimi": kimi_data
+    }
+
+    payload = {
+        "status": root_status,
+        "last_updated": now_iso,
+        "ls_address": None,
+        "data": merged_data,
+        "raw": agy_raw,
+        "openrouter": or_data,
+        "kimi": kimi_data
+    }
+    if agy_cache_hit:
+        payload["cache_hit"] = True
+
     json_str = json.dumps(payload, indent=2, ensure_ascii=False)
-    for path in get_shared_limits_paths():
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp_path = path + ".tmp"
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                f.write(json_str)
-            os.replace(tmp_path, path)
-        except Exception:
-            pass
+    for path in limits_paths:
+        write_atomic_json(path, payload)
 
     print(json_str)
+    return payload
+
+def main():
+    mock_offline_providers = set()
+    simulate_delay = 0
+    target_provider = None
+
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg == "--mock-offline":
+            mock_offline_providers.add("agy")
+        elif arg.startswith("--mock-offline="):
+            val = arg.split("=", 1)[1].strip().lower()
+            if val in ("all", "1", "true"):
+                mock_offline_providers.update(["agy", "openrouter", "kimi"])
+            else:
+                for p in val.split(","):
+                    mock_offline_providers.add(p.strip().lower())
+        elif arg.startswith("--delay="):
+            try:
+                simulate_delay = float(arg.split("=", 1)[1])
+            except ValueError:
+                pass
+        elif arg.startswith("--provider="):
+            target_provider = arg.split("=", 1)[1].strip().lower()
+        elif arg == "--provider" and i + 1 < len(sys.argv):
+            i += 1
+            target_provider = sys.argv[i].strip().lower()
+        i += 1
+
+    if target_provider and target_provider not in ("agy", "openrouter", "kimi"):
+        sys.stderr.write(f"[fetch_quota] Error: unknown provider '{target_provider}'. Valid options: agy, openrouter, kimi\n")
+        sys.exit(1)
+
+    if simulate_delay > 0:
+        time.sleep(simulate_delay)
+
+    now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    limits_paths = get_shared_limits_paths()
+
+    # Branch 1: Single provider update (--provider <name>)
+    if target_provider == "agy":
+        agy_res = fetch_worker_agy("agy" in mock_offline_providers, limits_paths, now_iso)
+
+        prev_or = load_cached_provider("openrouter", limits_paths)
+        or_res = prev_or if prev_or else get_default_openrouter()
+
+        prev_kimi = load_cached_provider("kimi", limits_paths)
+        kimi_res = prev_kimi if prev_kimi else get_default_kimi()
+
+        assemble_and_save_limits(limits_paths, now_iso, agy_res, or_res, kimi_res)
+        return
+
+    elif target_provider == "openrouter":
+        or_res = fetch_worker_openrouter("openrouter" in mock_offline_providers, limits_paths, now_iso)
+
+        prev_agy = load_cached_provider("agy", limits_paths)
+        if prev_agy and isinstance(prev_agy, dict) and "buckets" in prev_agy:
+            agy_res = {
+                "status": prev_agy.get("status", "online"),
+                "buckets": prev_agy["buckets"],
+                "raw": prev_agy.get("raw"),
+                "cache_hit": False
+            }
+        else:
+            agy_res = {
+                "status": "unknown",
+                "buckets": get_default_agy_buckets(),
+                "raw": None,
+                "cache_hit": False
+            }
+
+        prev_kimi = load_cached_provider("kimi", limits_paths)
+        kimi_res = prev_kimi if prev_kimi else get_default_kimi()
+
+        assemble_and_save_limits(limits_paths, now_iso, agy_res, or_res, kimi_res)
+        return
+
+    elif target_provider == "kimi":
+        kimi_res = fetch_worker_kimi("kimi" in mock_offline_providers, limits_paths, now_iso)
+
+        prev_agy = load_cached_provider("agy", limits_paths)
+        if prev_agy and isinstance(prev_agy, dict) and "buckets" in prev_agy:
+            agy_res = {
+                "status": prev_agy.get("status", "online"),
+                "buckets": prev_agy["buckets"],
+                "raw": prev_agy.get("raw"),
+                "cache_hit": False
+            }
+        else:
+            agy_res = {
+                "status": "unknown",
+                "buckets": get_default_agy_buckets(),
+                "raw": None,
+                "cache_hit": False
+            }
+
+        prev_or = load_cached_provider("openrouter", limits_paths)
+        or_res = prev_or if prev_or else get_default_openrouter()
+
+        assemble_and_save_limits(limits_paths, now_iso, agy_res, or_res, kimi_res)
+        return
+
+    # Branch 2: Parallel fetch for all 3 providers
+    results = {}
+
+    def run_agy():
+        try:
+            results["agy"] = fetch_worker_agy("agy" in mock_offline_providers, limits_paths, now_iso)
+        except Exception as e:
+            sys.stderr.write(f"[agy-worker] Uncaught error: {e}\n")
+
+    def run_or():
+        try:
+            results["openrouter"] = fetch_worker_openrouter("openrouter" in mock_offline_providers, limits_paths, now_iso)
+        except Exception as e:
+            sys.stderr.write(f"[or-worker] Uncaught error: {e}\n")
+
+    def run_kimi():
+        try:
+            results["kimi"] = fetch_worker_kimi("kimi" in mock_offline_providers, limits_paths, now_iso)
+        except Exception as e:
+            sys.stderr.write(f"[kimi-worker] Uncaught error: {e}\n")
+
+    threads = [
+        threading.Thread(target=run_agy, name="worker-agy", daemon=True),
+        threading.Thread(target=run_or, name="worker-or", daemon=True),
+        threading.Thread(target=run_kimi, name="worker-kimi", daemon=True)
+    ]
+
+    for t in threads:
+        t.start()
+
+    # Overall join deadline < 20s (budget: worst case < 20s)
+    join_deadline = 18.0
+    start_join = time.time()
+    for t in threads:
+        remaining = max(0.1, join_deadline - (time.time() - start_join))
+        t.join(timeout=remaining)
+
+    # Check any worker that didn't finish (timeout or unhandled error)
+    if "agy" not in results:
+        sys.stderr.write("[main] Warning: agy worker timed out or failed\n")
+        prev_agy = load_cached_provider("agy", limits_paths)
+        if prev_agy and isinstance(prev_agy, dict) and "buckets" in prev_agy:
+            agy_res = {
+                "status": "stale",
+                "buckets": prev_agy["buckets"],
+                "raw": prev_agy.get("raw"),
+                "cache_hit": False
+            }
+        else:
+            agy_res = {
+                "status": "error",
+                "buckets": get_default_agy_buckets(),
+                "raw": None,
+                "cache_hit": False
+            }
+    else:
+        agy_res = results["agy"]
+
+    if "openrouter" not in results:
+        sys.stderr.write("[main] Warning: openrouter worker timed out or failed\n")
+        prev_or = load_cached_provider("openrouter", limits_paths)
+        if prev_or and isinstance(prev_or, dict):
+            or_res = dict(prev_or)
+            or_res["status"] = "stale"
+        else:
+            or_res = get_default_openrouter(status="error", error="timeout")
+    else:
+        or_res = results["openrouter"]
+
+    if "kimi" not in results:
+        sys.stderr.write("[main] Warning: kimi worker timed out or failed\n")
+        prev_kimi = load_cached_provider("kimi", limits_paths)
+        if prev_kimi and isinstance(prev_kimi, dict):
+            kimi_res = dict(prev_kimi)
+            kimi_res["status"] = "stale"
+        else:
+            kimi_res = get_default_kimi(status="error", error="timeout")
+    else:
+        kimi_res = results["kimi"]
+
+    assemble_and_save_limits(limits_paths, now_iso, agy_res, or_res, kimi_res)
 
 if __name__ == "__main__":
     main()
