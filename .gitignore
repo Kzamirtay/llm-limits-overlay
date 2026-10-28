@@ -18,11 +18,6 @@ bin/
 obj/
 *.exe
 
-# Python caches and bytecode
-__pycache__/
-*.py[cod]
-*$py.class
-
 # Screenshots & media (only keep docs/screenshots/)
 *.png
 !docs/screenshots/*.png

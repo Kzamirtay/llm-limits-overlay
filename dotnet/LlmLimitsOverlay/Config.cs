@@ -11,8 +11,6 @@ namespace LlmLimitsOverlay {
 
         private static readonly string[] CanonicalKeyOrder = new string[] {
             "backend",
-            "pythonPath",
-            "wslDistro",
             "timeoutSeconds",
             "testHooks",
             "clickThroughHotkey",
@@ -20,17 +18,13 @@ namespace LlmLimitsOverlay {
         };
 
         public string Backend { get; set; }
-        public string PythonPath { get; set; }
-        public string WslDistro { get; set; }
         public double TimeoutSeconds { get; set; }
         public bool TestHooks { get; set; }
         public string ClickThroughHotkey { get; set; }
         public bool ClickThrough { get; set; }
 
         public Config() {
-            Backend = "windows";
-            PythonPath = "";
-            WslDistro = "";
+            Backend = "native";
             TimeoutSeconds = 0;
             TestHooks = false;
             ClickThroughHotkey = "Ctrl+Alt+L";
@@ -55,9 +49,9 @@ namespace LlmLimitsOverlay {
 
                 var dict = SimpleJson.Deserialize(raw) as Dictionary<string, object>;
                 if (dict != null) {
-                    cfg.Backend = SimpleJson.GetString(dict, "backend", "windows").ToLowerInvariant();
-                    cfg.PythonPath = SimpleJson.GetString(dict, "pythonPath", "");
-                    cfg.WslDistro = SimpleJson.GetString(dict, "wslDistro", "");
+                    // Backend is always native since v1.2.0 (Python/WSL removed);
+                    // legacy values (auto/windows/wsl) are normalized silently.
+                    cfg.Backend = "native";
                     cfg.TimeoutSeconds = SimpleJson.GetDouble(dict, "timeoutSeconds", 0);
                     cfg.TestHooks = SimpleJson.GetBool(dict, "testHooks", false);
                     cfg.ClickThroughHotkey = SimpleJson.GetString(dict, "clickThroughHotkey", "Ctrl+Alt+L");
@@ -157,9 +151,7 @@ namespace LlmLimitsOverlay {
 
                     if (dict == null) {
                         dict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-                        dict["backend"] = "windows";
-                        dict["pythonPath"] = "";
-                        dict["wslDistro"] = "";
+                        dict["backend"] = "native";
                         dict["timeoutSeconds"] = 0;
                         dict["testHooks"] = false;
                         dict["clickThroughHotkey"] = "Ctrl+Alt+L";

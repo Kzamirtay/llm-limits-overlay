@@ -7,17 +7,16 @@ using System.Windows;
 namespace LlmLimitsOverlay {
     public class App : Application {
         public static string ResolveAppDirectory() {
+            // v1.2.0+: native C# fetcher, no fetch_quota.py.
+            // The app directory is always the directory containing the exe.
             string dir = AppDomain.CurrentDomain.BaseDirectory;
-            if (File.Exists(Path.Combine(dir, "fetch_quota.py"))) {
+            // Walk up to the directory containing overlay.config.json or .env as a sanity check
+            if (File.Exists(Path.Combine(dir, "overlay.config.json")) || File.Exists(Path.Combine(dir, ".env"))) {
                 return Path.GetFullPath(dir);
             }
             string parent = Path.GetFullPath(Path.Combine(dir, ".."));
-            if (File.Exists(Path.Combine(parent, "fetch_quota.py"))) {
+            if (File.Exists(Path.Combine(parent, "overlay.config.json")) || File.Exists(Path.Combine(parent, ".env"))) {
                 return parent;
-            }
-            string grandParent = Path.GetFullPath(Path.Combine(dir, "..", ".."));
-            if (File.Exists(Path.Combine(grandParent, "fetch_quota.py"))) {
-                return grandParent;
             }
             return Path.GetFullPath(dir);
         }

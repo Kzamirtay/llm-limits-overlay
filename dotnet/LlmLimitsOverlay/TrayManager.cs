@@ -11,10 +11,6 @@ namespace LlmLimitsOverlay {
 
         private ToolStripMenuItem _menuToggle;
         private ToolStripMenuItem _menuRefresh;
-        private ToolStripMenuItem _menuEnv;
-        private ToolStripMenuItem _menuBackendAuto;
-        private ToolStripMenuItem _menuBackendWindows;
-        private ToolStripMenuItem _menuBackendWsl;
         private ToolStripMenuItem _menuClickThrough;
         private ToolStripMenuItem _menuResetPos;
         private ToolStripMenuItem _menuExit;
@@ -87,22 +83,6 @@ namespace LlmLimitsOverlay {
             };
             _trayMenu.Items.Add(_menuRefresh);
 
-            _menuEnv = new ToolStripMenuItem("Окружение");
-
-            _menuBackendAuto = new ToolStripMenuItem("Авто") { CheckOnClick = false };
-            _menuBackendAuto.Click += (s, e) => _overlayWindow.SetBackendFromMenu("auto");
-            _menuEnv.DropDownItems.Add(_menuBackendAuto);
-
-            _menuBackendWindows = new ToolStripMenuItem("Windows (нативный Python)") { CheckOnClick = false };
-            _menuBackendWindows.Click += (s, e) => _overlayWindow.SetBackendFromMenu("windows");
-            _menuEnv.DropDownItems.Add(_menuBackendWindows);
-
-            _menuBackendWsl = new ToolStripMenuItem("WSL") { CheckOnClick = false };
-            _menuBackendWsl.Click += (s, e) => _overlayWindow.SetBackendFromMenu("wsl");
-            _menuEnv.DropDownItems.Add(_menuBackendWsl);
-
-            _trayMenu.Items.Add(_menuEnv);
-
             _menuClickThrough = new ToolStripMenuItem("Клики насквозь") { CheckOnClick = false };
             _menuClickThrough.Checked = _overlayWindow.IsClickThrough;
             _menuClickThrough.Click += (s, e) => _overlayWindow.ToggleClickThrough("tray");
@@ -128,11 +108,6 @@ namespace LlmLimitsOverlay {
                 _menuToggle.Text = _overlayWindow.Visibility == System.Windows.Visibility.Visible ? "Скрыть оверлей" : "Показать оверлей";
                 _menuRefresh.Enabled = !_overlayWindow.IsFetching;
                 _menuClickThrough.Checked = _overlayWindow.IsClickThrough;
-
-                string currentB = _overlayWindow.CurrentBackend;
-                _menuBackendAuto.Checked = (currentB == "auto");
-                _menuBackendWindows.Checked = (currentB == "windows");
-                _menuBackendWsl.Checked = (currentB == "wsl");
             };
         }
 

@@ -79,12 +79,6 @@ namespace LlmLimitsOverlay {
                 } else if (Regex.IsMatch(cmd, @"^refresh$", RegexOptions.IgnoreCase)) {
                     Logger.Log("Tray menu: 'Обновить квоты' clicked.");
                     _overlayWindow.StartAsyncRefresh();
-                } else if (Regex.IsMatch(cmd, @"^backend:(.+)$", RegexOptions.IgnoreCase)) {
-                    var m = Regex.Match(cmd, @"^backend:(.+)$", RegexOptions.IgnoreCase);
-                    string b = m.Groups[1].Value.Trim().ToLowerInvariant();
-                    if (b == "auto" || b == "windows" || b == "wsl") {
-                        _overlayWindow.SetBackendFromMenu(b);
-                    }
                 } else if (Regex.IsMatch(cmd, @"^move:(-?\d+),(-?\d+)$", RegexOptions.IgnoreCase)) {
                     var m = Regex.Match(cmd, @"^move:(-?\d+),(-?\d+)$", RegexOptions.IgnoreCase);
                     double l = double.Parse(m.Groups[1].Value);

@@ -67,9 +67,6 @@ namespace LlmLimitsOverlay {
 
         // Window Context Menu items
         private MenuItem _menuRefresh;
-        private MenuItem _menuBackendAuto;
-        private MenuItem _menuBackendWindows;
-        private MenuItem _menuBackendWsl;
         private MenuItem _menuClose;
 
         // Controllers & helpers
@@ -89,10 +86,6 @@ namespace LlmLimitsOverlay {
 
         public bool IsFetching {
             get { return _fetcher != null && _fetcher.IsFetching; }
-        }
-
-        public string CurrentBackend {
-            get { return _config != null ? _config.Backend : "windows"; }
         }
 
         public QuotaSnapshot LastSnapshot {
@@ -382,37 +375,12 @@ namespace LlmLimitsOverlay {
 
             ctxMenu.Items.Add(new Separator { Background = (System.Windows.Media.Brush)new BrushConverter().ConvertFromString("#E2E8F0") });
 
-            var menuEnv = new MenuItem { Header = "Окружение", Foreground = OverlayTheme.MetaTextBrush };
-
-            _menuBackendAuto = new MenuItem { Header = "Авто", IsCheckable = true, Foreground = OverlayTheme.MetaTextBrush };
-            _menuBackendAuto.Click += (s, e) => SetBackendFromMenu("auto");
-            menuEnv.Items.Add(_menuBackendAuto);
-
-            _menuBackendWindows = new MenuItem { Header = "Windows (нативный Python)", IsCheckable = true, Foreground = OverlayTheme.MetaTextBrush };
-            _menuBackendWindows.Click += (s, e) => SetBackendFromMenu("windows");
-            menuEnv.Items.Add(_menuBackendWindows);
-
-            _menuBackendWsl = new MenuItem { Header = "WSL", IsCheckable = true, Foreground = OverlayTheme.MetaTextBrush };
-            _menuBackendWsl.Click += (s, e) => SetBackendFromMenu("wsl");
-            menuEnv.Items.Add(_menuBackendWsl);
-
-            ctxMenu.Items.Add(menuEnv);
-
-            ctxMenu.Items.Add(new Separator { Background = (System.Windows.Media.Brush)new BrushConverter().ConvertFromString("#E2E8F0") });
-
             _menuClose = new MenuItem { Header = "Закрыть", Foreground = OverlayTheme.MetaTextBrush };
             _menuClose.Click += (s, e) => {
                 Logger.Log("User clicked 'Закрыть'. Exiting.");
                 ExitOverlay();
             };
             ctxMenu.Items.Add(_menuClose);
-
-            ctxMenu.Opened += (s, e) => {
-                string b = CurrentBackend;
-                _menuBackendAuto.IsChecked = (b == "auto");
-                _menuBackendWindows.IsChecked = (b == "windows");
-                _menuBackendWsl.IsChecked = (b == "wsl");
-            };
 
             ContextMenu = ctxMenu;
         }
@@ -565,16 +533,6 @@ namespace LlmLimitsOverlay {
                 bool vis = NativeMethods.IsWindowVisible(h);
                 Logger.Log(string.Format("Tray action: Showing overlay window (WPF Visibility=Visible, Win32 IsWindowVisible={0}).", vis));
             }
-        }
-
-        public void SetBackendFromMenu(string newBackend) {
-            BackendResolver.ClearCache();
-            _config.Backend = newBackend;
-            Config.SaveField("backend", newBackend);
-            Logger.Log(string.Format("User switched backend to '{0}' via menu.", newBackend));
-            _lastIsStale = false;
-            _fetcher.CancelRunningFetch();
-            StartAsyncRefresh();
         }
 
         public void StartAsyncRefresh() {
@@ -757,14 +715,13 @@ namespace LlmLimitsOverlay {
             IntPtr h = new WindowInteropHelper(this).Handle;
             bool v = NativeMethods.IsWindowVisible(h);
             int ex = NativeMethods.GetWindowExStyle(h);
-            string b = CurrentBackend;
 
             var pt = new NativeMethods.POINT((int)(Left + 50), (int)(Top + 50));
             IntPtr hit = NativeMethods.WindowFromPoint(pt);
             bool isUnderneath = (hit != h);
 
-            Logger.Log(string.Format("Status query: Visibility={0}, Win32 IsWindowVisible={1}, GWL_EXSTYLE=0x{2:X8}, ClickThrough={3}, Backend={4}, Left={5}, Top={6}, HitHwnd=0x{7:X8}, IsHitUnderneath={8}",
-                Visibility, v, ex, _clickThrough, b, Left, Top, hit.ToInt64(), isUnderneath));
+            Logger.Log(string.Format("Status query: Visibility={0}, Win32 IsWindowVisible={1}, GWL_EXSTYLE=0x{2:X8}, ClickThrough={3}, Left={4}, Top={5}, HitHwnd=0x{6:X8}, IsHitUnderneath={7}",
+                Visibility, v, ex, _clickThrough, Left, Top, hit.ToInt64(), isUnderneath));
         }
 
         public void ExitOverlay() {

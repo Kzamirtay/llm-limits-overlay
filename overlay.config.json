@@ -1,7 +1,5 @@
-﻿{
-    "backend":  "windows",
-    "pythonPath":  "",
-    "wslDistro":  "",
+{
+    "backend":  "native",
     "timeoutSeconds":  0,
     "testHooks":  false,
     "clickThroughHotkey":  "Ctrl+Alt+L",
