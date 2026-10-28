@@ -33,6 +33,9 @@
   - All quota fetches run **in-process** as concurrent async tasks — no subprocess spawning, no `wsl.exe`, no Python.
   - Per-provider timeouts: HTTP 3.5 s for OpenRouter / Kimi; 8 s for `agy.exe`.
   - Antigravity quota caching (300 s in `%TEMP%\llm_limits_agy_usage_cache.json`) keeps the `agy.exe` call rate minimal while OpenRouter and Kimi are refreshed on every 60-second polling cycle.
+- **Per-Card Update Timestamps (v1.2.0+)**:
+  - Each of the three cards (KIMI / OPENROUTER / GEMINI+CLAUDE-GPT) shows its own relative update age (`только что`, `N мин`) in the bottom-right corner.
+  - Providers update independently, so the ages can differ across cards; a failed provider keeps the time of its **last successful fetch** and gets a ` (stale)` suffix on its own card only.
 
 ---
 
@@ -43,7 +46,6 @@ The overlay presents information in three logical vertical cards from top to bot
 1. **KIMI** (Top card):
    - **Weekly Limit (7d)**: Time until quota reset (e.g., `3d 8h`), percentage consumed (`100%`), and visual progress gauge.
    - **5-Hour Limit (5h)**: Time until reset (`2h 41m`), percentage consumed (`8.9%`), and progress bar.
-   - **Timestamp**: Subtle relative update time (`just now`, `4m ago`, `stale`) in the bottom-right corner, refreshed every 10 seconds.
    - Source: `GET https://api.kimi.com/coding/v1/usages` (HTTP Bearer auth).
 
 2. **OPENROUTER** (Middle card):
@@ -56,6 +58,8 @@ The overlay presents information in three logical vertical cards from top to bot
      - **GEMINI**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
      - **CLAUDE / GPT**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
    - Source: Native `agy.exe -p /usage --output-format json` (Antigravity CLI v1.4.9+).
+
+Each card shows its own **relative update time** in the bottom-right corner (`только что` = "just now", `N мин` = "N min ago"), recalculated every 10 seconds by the UI timer — no network requests. If a provider's block is `stale`, only its card gets the ` (stale)` suffix; the timestamp keeps showing the **last successful fetch** time and continues to age, so you can see how old the cached data really is. A global stale mark across all cards only appears when the whole snapshot is not `online` (e.g. the very first launch with no cache file). The wording/format of these lines is defined by constants in `OverlayTheme.cs` (`RelativeTimeJustNow`, `RelativeTimeStaleSuffix`, etc.).
 
 ---
 
@@ -95,26 +99,36 @@ If `agy.exe` hangs or is not found → only the Gemini/Claude card shows `stale`
 
 ### `limits.json` Format
 
-The format is unchanged from v1.1.x. The root object:
+Since commit `4f7df9a` (per-card update timestamps) every provider block carries its **own** `last_updated` — the time of that provider's last successful fetch (`yyyy-MM-dd HH:mm:ss`, local time). The root object:
 
 ```json
 {
   "status": "online",
-  "last_updated": "2026-10-28 15:30:00",
+  "last_updated": "2026-10-28 16:38:27",
   "data": {
-    "gemini_5h":     { "used_fraction": 0.12, "used_percent": 12.0, "reset_in": "3h 22m", ... },
+    "gemini_5h":     { "percent": 88.0, "fraction": 0.8802, "used_percent": 12.0, "used_fraction": 0.1198, "reset_in": "2h 40m", ... },
     "gemini_weekly": { ... },
     "claude_5h":     { ... },
     "claude_weekly": { ... },
-    "openrouter": { "status": "online", "limit": 20.0, "usage": 0.74, "limit_remaining": 19.26, ... },
+    "agy":        { "status": "online", "last_updated": "2026-10-28 16:38:27" },
+    "openrouter": { "status": "online", "last_updated": "2026-10-28 16:38:27", "limit": 10.0, "usage": 1.36, "limit_remaining": 9.51, ... },
     "kimi": {
       "status": "online",
-      "limit_5h": { "used_ratio": 0.089, "used_percent": 8.9, "reset_in": "2h 41m", ... },
+      "last_updated": "2026-10-28 16:38:27",
+      "limit_5h": { "used_ratio": 0.39, "used_percent": 39.3, "reset_in": "1h 43m", ... },
       "limit_7d": { ... }
     }
   }
 }
 ```
+
+Timestamp semantics:
+
+- `data.agy` is a metadata block for the whole Gemini+Claude/GPT card (the bucket values themselves remain in `gemini_5h`, `gemini_weekly`, `claude_5h`, `claude_weekly`).
+- On failure or timeout a provider block becomes `stale`, and its `last_updated` is **preserved from the last success** — it keeps aging so the UI shows the real age of the displayed data.
+- An AGY cache hit does **not** move the timestamp: it is taken from the cache record, so the card reflects the age of the cached data (up to 300 s).
+- The root `last_updated` is the time of the last merge of all three providers; the root `status` stays `online` as long as at least one provider is `online`.
+- If a per-provider `last_updated` is absent (files written by an older version), the reader falls back to the root `last_updated`.
 
 ---
 
