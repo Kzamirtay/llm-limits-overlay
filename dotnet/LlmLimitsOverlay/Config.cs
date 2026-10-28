@@ -35,6 +35,13 @@ namespace LlmLimitsOverlay {
             _configFilePath = Path.Combine(appDirectory, "overlay.config.json");
         }
 
+        // CLI override: use an explicit config file path instead of the default one.
+        public static void InitializeWithFile(string configFilePath) {
+            if (!string.IsNullOrEmpty(configFilePath)) {
+                _configFilePath = configFilePath;
+            }
+        }
+
         public static Config Load() {
             var cfg = new Config();
             if (string.IsNullOrEmpty(_configFilePath) || !File.Exists(_configFilePath)) {

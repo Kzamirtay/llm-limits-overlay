@@ -44,6 +44,7 @@ Name: "autostart"; Description: "Автозапуск при входе в Windo
 
 [Files]
 Source: "..\dotnet\bin\LlmLimitsOverlay.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dotnet\bin\llm-limits.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\overlay.config.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\assets\app.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion

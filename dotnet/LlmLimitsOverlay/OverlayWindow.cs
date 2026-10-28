@@ -119,7 +119,7 @@ namespace LlmLimitsOverlay {
             BuildUi();
             BuildContextMenu();
 
-            _fetcher = new QuotaFetcher(appDirectory, OnDataLoaded, OnFetchStateChanged);
+            _fetcher = new QuotaFetcher(appDirectory, OnDataLoaded, OnFetchStateChanged, a => Dispatcher.BeginInvoke(a));
 
             SourceInitialized += OnSourceInitialized;
             ContentRendered += OnContentRendered;

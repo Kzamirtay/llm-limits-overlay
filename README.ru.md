@@ -303,6 +303,24 @@ LlmLimitsOverlay-Setup-1.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 "%LOCALAPPDATA%\LlmLimitsOverlay\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
+#### 4. CLI: `llm-limits.exe`
+Рядом с GUI поставляется консольная утилита (тот же движок фетча, те же таймауты и кэш). Выводит статус квот в терминал — удобно для скриптов и быстрых проверок.
+
+```cmd
+llm-limits.exe                 # выровненная таблица по трём провайдерам
+llm-limits.exe --json         # машиночитаемый JSON (status + блоки провайдеров)
+llm-limits.exe --provider kimi
+llm-limits.exe --watch 30     # цикл обновления; выход — Ctrl+C
+llm-limits.exe --no-cache     # игнорировать кэш agy /usage (форс-запуск agy.exe)
+llm-limits.exe --env .env --agy-bin C:\tools\agy.exe
+```
+
+- `--provider kimi|openrouter|agy`, `--env <путь>`, `--config <путь>`, `--agy-bin <путь>` — переопределения.
+- `--no-color` и переменная окружения `NO_COLOR` отключают ANSI-цвета.
+- В режиме `--watch` при перенаправленном (не-TTY) выводе печатается блок за тик вместо перерисовки экрана.
+- Коды выхода: `0` — все провайдеры online; `2` — часть stale/disabled; `1` — все недоступны или ошибка аргументов.
+- API-ключи и сырые label OpenRouter не печатаются (label маскируется, как в `limits.json`).
+
 ---
 
 ## Диагностика и логи

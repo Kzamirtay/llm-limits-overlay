@@ -8,7 +8,6 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Threading;
 
 namespace LlmLimitsOverlay {
     public class AgyWorkerResult {
@@ -30,7 +29,13 @@ namespace LlmLimitsOverlay {
         private readonly string _fallbackJsonPath;
         private readonly Action<QuotaSnapshot> _onDataLoaded;
         private readonly Action<bool, string> _onFetchStateChanged;
-        private readonly Dispatcher _dispatcher;
+        // UI-thread marshaler. GUI passes a Dispatcher-based one; console/other
+        // hosts use the default (execute inline).
+        private readonly Action<Action> _dispatch;
+        // When true, agy /usage disk+memory cache is bypassed (CLI --no-cache).
+        public static bool BypassAgyCache = false;
+        // CLI override: explicit .env file path (CLI --env).
+        public string EnvFileOverride = null;
 
         private static object _agyMemoryCacheRaw = null;
         private static Dictionary<string, object> _agyMemoryCacheData = null;
@@ -44,7 +49,11 @@ namespace LlmLimitsOverlay {
             get { return _isFetching; }
         }
 
-        public QuotaFetcher(string appDirectory, Action<QuotaSnapshot> onDataLoaded, Action<bool, string> onFetchStateChanged) {
+        public QuotaFetcher(string appDirectory, Action<QuotaSnapshot> onDataLoaded, Action<bool, string> onFetchStateChanged)
+            : this(appDirectory, onDataLoaded, onFetchStateChanged, null) {
+        }
+
+        public QuotaFetcher(string appDirectory, Action<QuotaSnapshot> onDataLoaded, Action<bool, string> onFetchStateChanged, Action<Action> dispatch) {
             _appDirectory = appDirectory;
             _limitsJsonPath = Path.Combine(appDirectory, "limits.json");
 
@@ -55,7 +64,7 @@ namespace LlmLimitsOverlay {
 
             _onDataLoaded = onDataLoaded;
             _onFetchStateChanged = onFetchStateChanged;
-            _dispatcher = Dispatcher.CurrentDispatcher;
+            _dispatch = dispatch ?? (a => a());
 
             try {
                 ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
@@ -64,8 +73,8 @@ namespace LlmLimitsOverlay {
 
         private void InvokeOnUI(Action action) {
             if (action == null) return;
-            if (_dispatcher != null && !_dispatcher.CheckAccess()) {
-                _dispatcher.BeginInvoke(action);
+            if (_dispatch != null) {
+                _dispatch(action);
             } else {
                 action();
             }
@@ -138,7 +147,10 @@ namespace LlmLimitsOverlay {
             try {
                 string nowIso = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                 string[] limitsPaths = GetTargetLimitsPaths();
-                var envParser = new EnvParser(Path.Combine(_appDirectory, ".env"));
+                string envPath = !string.IsNullOrEmpty(EnvFileOverride)
+                    ? EnvFileOverride
+                    : Path.Combine(_appDirectory, ".env");
+                var envParser = new EnvParser(envPath);
 
                 Logger.Log(string.Format("Starting async native refresh at {0}...", nowIso));
 
@@ -871,6 +883,10 @@ namespace LlmLimitsOverlay {
             rawObj = null;
             dataObj = null;
             cacheTimestamp = 0;
+
+            if (BypassAgyCache) {
+                return false;
+            }
 
             double ttl = GetQuotaCacheSeconds();
             double now = GetCurrentUnixTime();

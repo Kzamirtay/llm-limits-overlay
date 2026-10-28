@@ -303,6 +303,24 @@ LlmLimitsOverlay-Setup-1.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 "%LOCALAPPDATA%\LlmLimitsOverlay\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
+#### 4. CLI: `llm-limits.exe`
+A companion console utility ships next to the GUI (same fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
+
+```cmd
+llm-limits.exe                 # aligned table of all three providers
+llm-limits.exe --json         # machine-readable JSON (status, per-provider blocks)
+llm-limits.exe --provider kimi
+llm-limits.exe --watch 30     # refresh loop; Ctrl+C to exit
+llm-limits.exe --no-cache     # bypass the agy /usage cache (forces agy.exe run)
+llm-limits.exe --env .env --agy-bin C:\tools\agy.exe
+```
+
+- `--provider kimi|openrouter|agy`, `--env <path>`, `--config <path>`, `--agy-bin <path>` — overrides.
+- `--no-color` and the `NO_COLOR` environment variable disable ANSI colors.
+- In `--watch` mode with redirected (non-TTY) output the tool prints one block per tick instead of redrawing the screen.
+- Exit codes: `0` — all providers online; `2` — some providers stale/disabled; `1` — all failed or bad arguments.
+- API keys and raw OpenRouter labels are never printed (labels are masked, same as in `limits.json`).
+
 ---
 
 ## Diagnostics & Logs
