@@ -1,9 +1,9 @@
 ; LlmLimitsOverlay Inno Setup Script
 ; Build: ISCC.exe LlmLimitsOverlay.iss
-; Output: dist/LlmLimitsOverlay-Setup-1.2.0.exe
+; Output: dist/LlmLimitsOverlay-Setup-1.2.1.exe
 
 #define MyAppName "LLM Limits Overlay"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
 #define MyAppPublisher "Kzamirtay"
 #define MyAppURL "https://github.com/Kzamirtay/llm-limits-overlay"
 #define MyAppExeName "LlmLimitsOverlay.exe"
@@ -59,7 +59,7 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 
 [Registry]
 ; Автозапуск — HKCU\Software\Microsoft\Windows\CurrentVersion\Run
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "LlmLimitsOverlay"; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletevalue; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "LlmLimitsOverlay"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

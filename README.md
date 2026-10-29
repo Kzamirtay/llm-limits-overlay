@@ -281,7 +281,7 @@ dotnet\bin\LlmLimitsOverlay.exe
 Technical architecture details are documented in [dotnet/README.md](dotnet/README.md).
 
 #### 3. Windows Installer (v1.2.0+)
-A per-user Windows installer is available: `LlmLimitsOverlay-Setup-1.2.0.exe` (Inno Setup 6).
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-1.2.1.exe` (Inno Setup 6).
 
 **Features:**
 - Installs to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
@@ -293,7 +293,7 @@ A per-user Windows installer is available: `LlmLimitsOverlay-Setup-1.2.0.exe` (I
 
 **Silent install (for automation):**
 ```cmd
-LlmLimitsOverlay-Setup-1.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-1.2.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.

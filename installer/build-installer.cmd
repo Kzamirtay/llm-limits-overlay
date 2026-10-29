@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 rem Build LlmLimitsOverlay installer via Inno Setup (ISCC.exe)
-rem Output: dist/LlmLimitsOverlay-Setup-1.2.0.exe
+rem Output: dist/LlmLimitsOverlay-Setup-1.2.1.exe
 
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%\.."
@@ -28,8 +28,8 @@ if not exist "%DIST_DIR%" (
 
 echo =======================================================
 echo Building LlmLimitsOverlay Installer via Inno Setup...
-echo Version: 1.2.0
-echo Output: %DIST_DIR%\LlmLimitsOverlay-Setup-1.2.0.exe
+echo Version: 1.2.1
+echo Output: %DIST_DIR%\LlmLimitsOverlay-Setup-1.2.1.exe
 echo =======================================================
 
 "%ISCC%" "%ISS_FILE%"
@@ -39,7 +39,7 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b %ERRORLEVEL%
 )
 
-for %%F in ("%DIST_DIR%\LlmLimitsOverlay-Setup-1.2.0.exe") do (
+for %%F in ("%DIST_DIR%\LlmLimitsOverlay-Setup-1.2.1.exe") do (
     echo [SUCCESS] Installer built!
     echo Executable: %%~fF
     echo File size:  %%~zF bytes
