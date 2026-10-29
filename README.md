@@ -59,7 +59,7 @@ The overlay presents information in three logical vertical cards from top to bot
      - **CLAUDE / GPT**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
    - Source: Native `agy.exe -p /usage --output-format json` (Antigravity CLI v1.4.9+).
 
-Each card shows its own **relative update time** in the bottom-right corner (`только что` = "just now", `N мин` = "N min ago"), recalculated every 10 seconds by the UI timer — no network requests. If a provider's block is `stale`, only its card gets the ` (stale)` suffix; the timestamp keeps showing the **last successful fetch** time and continues to age, so you can see how old the cached data really is. A global stale mark across all cards only appears when the whole snapshot is not `online` (e.g. the very first launch with no cache file). The wording/format of these lines is defined by constants in `OverlayTheme.cs` (`RelativeTimeJustNow`, `RelativeTimeStaleSuffix`, etc.).
+Each card shows its own **relative update time** in the bottom-right corner (`только что` = "just now", `N мин` = "N min ago"), recalculated every 10 seconds by the UI timer — no network requests. If a provider's block is `stale`, only its card gets the ` (stale)` suffix; the timestamp keeps showing the **last successful fetch** time and continues to age, so you can see how old the cached data really is. If a provider's API key is missing or is a placeholder (e.g. from `.env.example`), the card shows **нет ключа** instead of a time, and no HTTP request is made for that provider. The wording/format of these lines is defined by constants in `OverlayTheme.cs` (`RelativeTimeJustNow`, `RelativeTimeStaleSuffix`, `RelativeTimeNoKey`, etc.).
 
 ---
 
@@ -323,7 +323,8 @@ llm-limits.exe --env .env --agy-bin C:\tools\agy.exe
 - `--provider kimi|openrouter|agy`, `--env <path>`, `--config <path>`, `--agy-bin <path>` — overrides.
 - `--no-color` and the `NO_COLOR` environment variable disable ANSI colors.
 - In `--watch` mode with redirected (non-TTY) output the tool prints one block per tick instead of redrawing the screen.
-- Exit codes: `0` — all providers online; `2` — some providers stale/disabled; `1` — all failed or bad arguments.
+- Exit codes: `0` — all providers online; `2` — some providers stale or missing key (`no_key`); `1` — all failed or bad arguments.
+- If a provider key is a placeholder (not set), its status is `no_key` — no HTTP request is made, and the card shows `нет ключа`. Fill in real keys in `.env` next to `LlmLimitsOverlay.exe`.
 - API keys and raw OpenRouter labels are never printed (labels are masked, same as in `limits.json`).
 
 ---

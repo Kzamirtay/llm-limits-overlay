@@ -281,6 +281,7 @@ namespace LlmLimitsCli {
             switch ((status ?? "").ToLowerInvariant()) {
                 case "online": return ConsoleColor.Green;
                 case "stale": return ConsoleColor.DarkYellow;
+                case "no_key": return ConsoleColor.Gray;
                 case "error": return ConsoleColor.Red;
                 default: return null;
             }
@@ -400,6 +401,8 @@ namespace LlmLimitsCli {
             switch (status) {
                 case "online": return 0;
                 case "stale": return 2;
+                case "no_key": return 2;
+                case "disabled": return 2;
                 default: return 1;
             }
         }

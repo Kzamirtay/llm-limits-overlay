@@ -45,6 +45,10 @@ namespace LlmLimitsOverlay {
         private CancellationTokenSource _cts;
         private bool _isFetching = false;
 
+        // Одноразовое логирование плейсхолдер-ключей (чтобы не спамить каждый цикл)
+        private static bool _loggedNoKeyOpenRouter = false;
+        private static bool _loggedNoKeyKimi = false;
+
         public bool IsFetching {
             get { return _isFetching; }
         }
@@ -438,8 +442,12 @@ namespace LlmLimitsOverlay {
         // ---------------------------------------------------------------------
         private Dictionary<string, object> FetchWorkerOpenRouter(string[] limitsPaths, string nowIso, EnvParser env, CancellationToken token) {
             string key = env.Get("OPENROUTER_API_KEY");
-            if (string.IsNullOrEmpty(key)) {
-                var def = CreateDefaultOpenRouter("disabled", "OPENROUTER_API_KEY не найдена в .env");
+            if (string.IsNullOrEmpty(key) || EnvParser.IsPlaceholderKey(key)) {
+                if (!_loggedNoKeyOpenRouter) {
+                    Logger.Log("[openrouter] ключ не задан (placeholder) — HTTP пропущен");
+                    _loggedNoKeyOpenRouter = true;
+                }
+                var def = CreateDefaultOpenRouter("no_key", "OPENROUTER_API_KEY не задана или является плейсхолдером");
                 SaveProviderFragment("openrouter", WrapFragment(def, nowIso), limitsPaths);
                 return def;
             }
@@ -541,8 +549,12 @@ namespace LlmLimitsOverlay {
         // ---------------------------------------------------------------------
         private Dictionary<string, object> FetchWorkerKimi(string[] limitsPaths, string nowIso, EnvParser env, CancellationToken token) {
             string key = env.Get("KIMI_API_KEY");
-            if (string.IsNullOrEmpty(key)) {
-                var def = CreateDefaultKimi("disabled", "KIMI_API_KEY не найдена в .env");
+            if (string.IsNullOrEmpty(key) || EnvParser.IsPlaceholderKey(key)) {
+                if (!_loggedNoKeyKimi) {
+                    Logger.Log("[kimi] ключ не задан (placeholder) — HTTP пропущен");
+                    _loggedNoKeyKimi = true;
+                }
+                var def = CreateDefaultKimi("no_key", "KIMI_API_KEY не задана или является плейсхолдером");
                 SaveProviderFragment("kimi", WrapFragment(def, nowIso), limitsPaths);
                 return def;
             }
@@ -682,14 +694,11 @@ namespace LlmLimitsOverlay {
 
             string rootStatus;
             var statuses = new string[] { agyStatus, orStatus, kimiStatus };
+            // online, если хотя бы один провайдер online; иначе error
             if (Array.IndexOf(statuses, "online") != -1) {
                 rootStatus = "online";
-            } else if (Array.TrueForAll(statuses, s => s == "error")) {
-                rootStatus = "error";
-            } else if (Array.IndexOf(statuses, "stale") != -1) {
-                rootStatus = "stale";
             } else {
-                rootStatus = "online";
+                rootStatus = "error";
             }
 
             var agyBuckets = (agyRes != null && agyRes.Buckets != null)

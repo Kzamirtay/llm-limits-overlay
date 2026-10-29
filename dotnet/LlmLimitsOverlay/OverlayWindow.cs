@@ -87,10 +87,13 @@ namespace LlmLimitsOverlay {
         private TextBlock _txtAgyUpdated;
         private string _kimiUpdatedStr;
         private bool _kimiStale = false;
+        private string _kimiStatus = "online";
         private string _orUpdatedStr;
         private bool _orStale = false;
+        private string _orStatus = "online";
         private string _agyUpdatedStr;
         private bool _agyStale = false;
+        private string _agyStatus = "online";
 
         public bool IsClickThrough {
             get { return _clickThrough; }
@@ -577,12 +580,15 @@ namespace LlmLimitsOverlay {
 
             _kimiUpdatedStr = !string.IsNullOrEmpty(snapshot.Kimi.LastUpdated) ? snapshot.Kimi.LastUpdated : snapshot.LastUpdated;
             _kimiStale = globalStale || snapshot.Kimi.Status == "stale";
+            _kimiStatus = snapshot.Kimi.Status;
 
             _orUpdatedStr = !string.IsNullOrEmpty(snapshot.OpenRouter.LastUpdated) ? snapshot.OpenRouter.LastUpdated : snapshot.LastUpdated;
             _orStale = globalStale || snapshot.OpenRouter.Status == "stale";
+            _orStatus = snapshot.OpenRouter.Status;
 
             _agyUpdatedStr = !string.IsNullOrEmpty(snapshot.AgyLastUpdated) ? snapshot.AgyLastUpdated : snapshot.LastUpdated;
             _agyStale = globalStale || snapshot.AgyStatus == "stale";
+            _agyStatus = snapshot.AgyStatus;
 
             UpdateRelativeTimeText();
 
@@ -670,13 +676,18 @@ namespace LlmLimitsOverlay {
         }
 
         private void UpdateRelativeTimeText() {
-            UpdateCardUpdatedLine(_txtKimiUpdated, _kimiUpdatedStr, _kimiStale);
-            UpdateCardUpdatedLine(_txtOrUpdated, _orUpdatedStr, _orStale);
-            UpdateCardUpdatedLine(_txtAgyUpdated, _agyUpdatedStr, _agyStale);
+            UpdateCardUpdatedLine(_txtKimiUpdated, _kimiUpdatedStr, _kimiStale, _kimiStatus);
+            UpdateCardUpdatedLine(_txtOrUpdated, _orUpdatedStr, _orStale, _orStatus);
+            UpdateCardUpdatedLine(_txtAgyUpdated, _agyUpdatedStr, _agyStale, _agyStatus);
         }
 
-        private static void UpdateCardUpdatedLine(TextBlock tb, string updatedStr, bool isStale) {
+        private static void UpdateCardUpdatedLine(TextBlock tb, string updatedStr, bool isStale, string providerStatus) {
             if (tb == null || string.IsNullOrEmpty(updatedStr)) return;
+            if (providerStatus == "no_key") {
+                tb.Text = OverlayTheme.RelativeTimeNoKey;
+                tb.Foreground = OverlayTheme.MetaTextBrush;
+                return;
+            }
             tb.Text = OverlayTheme.GetRelativeTimeText(updatedStr, isStale);
             tb.Foreground = isStale ? OverlayTheme.UpdatedStaleTextBrush : OverlayTheme.MetaTextBrush;
         }

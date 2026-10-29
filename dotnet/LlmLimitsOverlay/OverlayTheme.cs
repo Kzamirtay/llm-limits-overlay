@@ -134,6 +134,7 @@ namespace LlmLimitsOverlay {
         public const string RelativeTimeMinutesSuffix = " мин";
         public const string RelativeTimeHoursSuffix = "ч";
         public const string RelativeTimeStaleSuffix = " (stale)";
+        public const string RelativeTimeNoKey = "нет ключа";
 
         public static string GetRelativeTimeText(string updatedStr, bool isStale) {
             if (string.IsNullOrEmpty(updatedStr)) {

@@ -29,6 +29,27 @@ namespace LlmLimitsOverlay {
             return null;
         }
 
+        // Возвращает true, если значение ключа — пустое, плейсхолдер из .env.example,
+        // или явно не настоящий ключ (содержит ..., here, xxxx и т.п.).
+        public static bool IsPlaceholderKey(string value) {
+            if (string.IsNullOrEmpty(value)) return true;
+
+            string v = value.Trim().Trim('"', '\'').Trim();
+            if (v.Length == 0) return true;
+
+            string lower = v.ToLowerInvariant();
+
+            // Признаки плейсхолдера: многоточие, слово here/xxxx, известные образцы
+            if (lower.Contains("...") || lower.Contains("here") || lower.Contains("xxxx")) return true;
+
+            // Образцы из .env.example (в любом регистре)
+            if (lower == "sk-or-v1-your-openrouter-key-here") return true;
+            if (lower == "sk-your-kimi-key-here") return true;
+            if (lower.StartsWith("sk-or-v1-") && lower.EndsWith("-here")) return true;
+
+            return false;
+        }
+
         public static string ParseEnvValue(string rawVal) {
             if (rawVal == null) return "";
             rawVal = rawVal.Trim();
