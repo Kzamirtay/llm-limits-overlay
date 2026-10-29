@@ -284,7 +284,7 @@ dotnet\bin\LlmLimitsOverlay.exe
 Подробная техническая документация и архитектура порта описаны в [dotnet/README.md](dotnet/README.md).
 
 #### 3. Windows-установщик (v1.2.0+)
-Доступен per-user установщик: `LlmLimitsOverlay-Setup-1.3.1.exe` (Inno Setup 6).
+Доступен per-user установщик: `LlmLimitsOverlay-Setup-1.3.2.exe` (Inno Setup 6).
 
 **Возможности:**
 - Устанавливается в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
@@ -296,7 +296,7 @@ dotnet\bin\LlmLimitsOverlay.exe
 
 **Тихая установка (для автоматизации):**
 ```cmd
-LlmLimitsOverlay-Setup-1.3.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-1.3.2.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **Предупреждение SmartScreen**: установщик не подписан цифровой подписью (нет EV-сертификата). Windows SmartScreen покажет «Защита Windows» — нажмите «Подробнее» → «Всё равно запустить». Это нормально для open-source проектов без платного сертификата.
