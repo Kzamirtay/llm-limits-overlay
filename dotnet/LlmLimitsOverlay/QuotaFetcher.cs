@@ -696,17 +696,16 @@ namespace LlmLimitsOverlay {
                 ? agyRes.Buckets
                 : GetDefaultAgyBuckets("unknown");
 
-            var mergedData = new Dictionary<string, object>();
-            mergedData["gemini_5h"] = agyBuckets.ContainsKey("gemini_5h") ? agyBuckets["gemini_5h"] : null;
-            mergedData["gemini_weekly"] = agyBuckets.ContainsKey("gemini_weekly") ? agyBuckets["gemini_weekly"] : null;
-            mergedData["claude_5h"] = agyBuckets.ContainsKey("claude_5h") ? agyBuckets["claude_5h"] : null;
-            mergedData["claude_weekly"] = agyBuckets.ContainsKey("claude_weekly") ? agyBuckets["claude_weekly"] : null;
-
             var agyInfo = new Dictionary<string, object>();
             agyInfo["status"] = agyStatus;
             agyInfo["last_updated"] = (agyRes != null && !string.IsNullOrEmpty(agyRes.LastUpdated)) ? agyRes.LastUpdated : nowIso;
-            mergedData["agy"] = agyInfo;
+            agyInfo["gemini_5h"] = agyBuckets.ContainsKey("gemini_5h") ? agyBuckets["gemini_5h"] : null;
+            agyInfo["gemini_weekly"] = agyBuckets.ContainsKey("gemini_weekly") ? agyBuckets["gemini_weekly"] : null;
+            agyInfo["claude_5h"] = agyBuckets.ContainsKey("claude_5h") ? agyBuckets["claude_5h"] : null;
+            agyInfo["claude_weekly"] = agyBuckets.ContainsKey("claude_weekly") ? agyBuckets["claude_weekly"] : null;
 
+            var mergedData = new Dictionary<string, object>();
+            mergedData["agy"] = agyInfo;
             mergedData["openrouter"] = orRes;
             mergedData["kimi"] = kimiRes;
 

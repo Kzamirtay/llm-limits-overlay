@@ -107,13 +107,16 @@ namespace LlmLimitsOverlay {
 
             var data = SimpleJson.GetObject(root, "data") ?? root;
 
-            // Gemini
-            snap.Gemini5h = ParseBucket(SimpleJson.GetObject(data, "gemini_5h"));
-            snap.GeminiWeekly = ParseBucket(SimpleJson.GetObject(data, "gemini_weekly"));
+            // Gemini / Claude buckets: first look inside data.agy (new format),
+            // fallback to flat data.gemini_5h etc. (old format files on disk).
+            var agyBucketsMeta = SimpleJson.GetObject(data, "agy") ?? new Dictionary<string, object>();
+
+            snap.Gemini5h = ParseBucket(SimpleJson.GetObject(agyBucketsMeta, "gemini_5h") ?? SimpleJson.GetObject(data, "gemini_5h"));
+            snap.GeminiWeekly = ParseBucket(SimpleJson.GetObject(agyBucketsMeta, "gemini_weekly") ?? SimpleJson.GetObject(data, "gemini_weekly"));
 
             // Claude
-            snap.Claude5h = ParseBucket(SimpleJson.GetObject(data, "claude_5h"));
-            snap.ClaudeWeekly = ParseBucket(SimpleJson.GetObject(data, "claude_weekly"));
+            snap.Claude5h = ParseBucket(SimpleJson.GetObject(agyBucketsMeta, "claude_5h") ?? SimpleJson.GetObject(data, "claude_5h"));
+            snap.ClaudeWeekly = ParseBucket(SimpleJson.GetObject(agyBucketsMeta, "claude_weekly") ?? SimpleJson.GetObject(data, "claude_weekly"));
 
             // OpenRouter
             var orDict = SimpleJson.GetObject(data, "openrouter") ?? SimpleJson.GetObject(root, "openrouter");

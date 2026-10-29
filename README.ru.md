@@ -106,11 +106,14 @@
   "status": "online",
   "last_updated": "2026-10-28 16:38:27",
   "data": {
-    "gemini_5h":     { "percent": 88.0, "fraction": 0.8802, "used_percent": 12.0, "used_fraction": 0.1198, "reset_in": "2h 40m", ... },
-    "gemini_weekly": { ... },
-    "claude_5h":     { ... },
-    "claude_weekly": { ... },
-    "agy":        { "status": "online", "last_updated": "2026-10-28 16:38:27" },
+    "agy": {
+      "status": "online",
+      "last_updated": "2026-10-28 16:38:27",
+      "gemini_5h":     { "percent": 88.0, "fraction": 0.8802, "used_percent": 12.0, "used_fraction": 0.1198, "reset_in": "2h 40m", ... },
+      "gemini_weekly": { ... },
+      "claude_5h":     { ... },
+      "claude_weekly": { ... }
+    },
     "openrouter": { "status": "online", "last_updated": "2026-10-28 16:38:27", "limit": 10.0, "usage": 1.36, "limit_remaining": 9.51, ... },
     "kimi": {
       "status": "online",
@@ -122,7 +125,7 @@
 }
 ```
 
-Семантика таймстемпов:
+> Обратная совместимость: старые файлы с плоской раскладкой (`data.gemini_5h`, `data.gemini_weekly`, `data.claude_5h`, `data.claude_weekly` на уровне `data`) по-прежнему читаются — если внутри `data.agy` бакетов нет, используются плоские ключи как раньше.
 
 - `data.agy` — мета-блок всей карточки Gemini+Claude/GPT (сами значения бакетов по-прежнему лежат в `gemini_5h`, `gemini_weekly`, `claude_5h`, `claude_weekly`).
 - При ошибке или таймауте блок провайдера становится `stale`, а его `last_updated` **сохраняется от последнего успеха** — он продолжает стареть, и UI показывает реальный возраст отображаемых данных.

@@ -106,11 +106,14 @@ Since commit `4f7df9a` (per-card update timestamps) every provider block carries
   "status": "online",
   "last_updated": "2026-10-28 16:38:27",
   "data": {
-    "gemini_5h":     { "percent": 88.0, "fraction": 0.8802, "used_percent": 12.0, "used_fraction": 0.1198, "reset_in": "2h 40m", ... },
-    "gemini_weekly": { ... },
-    "claude_5h":     { ... },
-    "claude_weekly": { ... },
-    "agy":        { "status": "online", "last_updated": "2026-10-28 16:38:27" },
+    "agy": {
+      "status": "online",
+      "last_updated": "2026-10-28 16:38:27",
+      "gemini_5h":     { "percent": 88.0, "fraction": 0.8802, "used_percent": 12.0, "used_fraction": 0.1198, "reset_in": "2h 40m", ... },
+      "gemini_weekly": { ... },
+      "claude_5h":     { ... },
+      "claude_weekly": { ... }
+    },
     "openrouter": { "status": "online", "last_updated": "2026-10-28 16:38:27", "limit": 10.0, "usage": 1.36, "limit_remaining": 9.51, ... },
     "kimi": {
       "status": "online",
@@ -121,6 +124,8 @@ Since commit `4f7df9a` (per-card update timestamps) every provider block carries
   }
 }
 ```
+
+> Backward compatibility: readers written for the older flat layout (`data.gemini_5h`, `data.gemini_weekly`, `data.claude_5h`, `data.claude_weekly` at the root of `data`) are still supported — if `data.agy` buckets are absent, the flat keys are read as a fallback.
 
 Timestamp semantics:
 
