@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>llm-limits</AssemblyName>
+    <RootNamespace>LlmLimitsCli</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\LlmLimitsCli\Program.cs" Link="Program.cs" />
+    <Compile Include="..\LlmLimitsOverlay\QuotaFetcher.cs" Link="QuotaFetcher.cs" />
+    <Compile Include="..\LlmLimitsOverlay\Models.cs" Link="Models.cs" />
+    <Compile Include="..\LlmLimitsOverlay\SimpleJson.cs" Link="SimpleJson.cs" />
+    <Compile Include="..\LlmLimitsOverlay\EnvParser.cs" Link="EnvParser.cs" />
+    <Compile Include="..\LlmLimitsOverlay\Logger.cs" Link="Logger.cs" />
+    <Compile Include="..\LlmLimitsOverlay\AgyResolver.cs" Link="AgyResolver.cs" />
+    <Compile Include="..\LlmLimitsOverlay\Config.cs" Link="Config.cs" />
+  </ItemGroup>
+
+</Project>

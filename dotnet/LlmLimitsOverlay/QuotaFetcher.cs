@@ -63,7 +63,7 @@ namespace LlmLimitsOverlay {
 
             string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             _fallbackJsonPath = !string.IsNullOrEmpty(userProfile)
-                ? Path.Combine(userProfile, @".gemini\antigravity-cli\limits.json")
+                ? Path.Combine(Path.Combine(userProfile, ".gemini"), Path.Combine("antigravity-cli", "limits.json"))
                 : null;
 
             _onDataLoaded = onDataLoaded;

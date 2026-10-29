@@ -43,7 +43,7 @@ namespace LlmLimitsCli {
                 && Environment.GetEnvironmentVariable("NO_COLOR") == null
                 && !Console.IsOutputRedirected;
 
-            string appDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            string appDir = AppContext.BaseDirectory;
             if (string.IsNullOrEmpty(appDir)) appDir = Environment.CurrentDirectory;
 
             // Initialize config

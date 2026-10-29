@@ -1,11 +1,16 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace LlmLimitsOverlay {
     public static class AgyResolver {
         private static string _cachedAgyBin = null;
         private static readonly object _syncLock = new object();
+
+        private static bool IsWindows() {
+            return RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        }
 
         public static void ClearCache() {
             lock (_syncLock) {
@@ -14,6 +19,21 @@ namespace LlmLimitsOverlay {
         }
 
         public static bool CheckAgyAuth() {
+            if (!IsWindows()) {
+                // Linux: токен только в домашней директории
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (!string.IsNullOrEmpty(home)) {
+                    string tokPath = Path.Combine(home, @".gemini/antigravity-cli/antigravity-oauth-token");
+                    if (File.Exists(tokPath)) {
+                        try {
+                            var fi = new FileInfo(tokPath);
+                            if (fi.Length > 0) return true;
+                        } catch { }
+                    }
+                }
+                return false;
+            }
+
             string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             if (!string.IsNullOrEmpty(userProfile)) {
                 string tokPath = Path.Combine(userProfile, @".gemini\antigravity-cli\antigravity-oauth-token");
@@ -54,19 +74,32 @@ namespace LlmLimitsOverlay {
                 // 2. PATH resolution
                 string pathEnv = Environment.GetEnvironmentVariable("PATH");
                 if (!string.IsNullOrEmpty(pathEnv)) {
-                    string[] parts = pathEnv.Split(';');
+                    char sep = IsWindows() ? ';' : ':';
+                    string[] parts = pathEnv.Split(sep);
                     foreach (string rawDir in parts) {
                         string dir = rawDir.Trim();
                         if (string.IsNullOrEmpty(dir)) continue;
 
                         try {
-                            string cand1 = Path.Combine(dir, "agy.exe");
-                            if (File.Exists(cand1)) return _cachedAgyBin = cand1;
-
+                            if (IsWindows()) {
+                                string cand1 = Path.Combine(dir, "agy.exe");
+                                if (File.Exists(cand1)) return _cachedAgyBin = cand1;
+                            }
                             string cand2 = Path.Combine(dir, "agy");
                             if (File.Exists(cand2)) return _cachedAgyBin = cand2;
                         } catch { }
                     }
+                }
+
+                if (!IsWindows()) {
+                    // 3. Linux: well-known install locations
+                    string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    if (!string.IsNullOrEmpty(home)) {
+                        string cand = Path.Combine(home, @".local/bin/agy");
+                        if (File.Exists(cand)) return _cachedAgyBin = cand;
+                    }
+                    if (File.Exists(@"/usr/local/bin/agy")) return _cachedAgyBin = @"/usr/local/bin/agy";
+                    return null;
                 }
 
                 // 3. Known LocalAppData path: %LOCALAPPDATA%\agy\bin\agy.exe

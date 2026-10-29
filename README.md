@@ -327,6 +327,29 @@ llm-limits --env .env --agy-bin C:\tools\agy.exe
 - If a provider key is a placeholder (not set), its status is `no_key` — no HTTP request is made, and the card shows `нет ключа`. Fill in real keys in `.env` next to `LlmLimitsOverlay.exe`.
 - API keys and raw OpenRouter labels are never printed (labels are masked, same as in `limits.json`).
 
+#### 5. Linux CLI (`llm-limits-linux-x64`)
+A self-contained Linux build of the same CLI ships in releases (`llm-limits-linux-x64`). It needs nothing installed — .NET runtime is bundled.
+
+```bash
+# copy to your user bin and make executable
+mkdir -p ~/.local/bin
+cp llm-limits-linux-x64 ~/.local/bin/llm-limits
+chmod +x ~/.local/bin/llm-limits
+
+llm-limits --json
+llm-limits --watch 30
+```
+
+- Keys are read from `.env` **next to the binary** (or `--env <path>`).
+- The Gemini/Claude card requires the native Linux `agy` binary: it is resolved from `LLM_LIMITS_AGY_BIN`, then `PATH`, then `~/.local/bin/agy`, `/usr/local/bin/agy`. The OAuth token is read from `~/.gemini/antigravity-cli/antigravity-oauth-token`.
+- Everything else (Kimi, OpenRouter) works without `agy`.
+- Build from source (requires .NET SDK 8):
+  ```bash
+  dotnet publish dotnet/LlmLimitsCli.Linux -c Release -r linux-x64 \
+    --self-contained true -p:PublishSingleFile=true \
+    -p:IncludeNativeLibrariesForSelfExtract=true -o dist/linux
+  ```
+
 ---
 
 ## Diagnostics & Logs
