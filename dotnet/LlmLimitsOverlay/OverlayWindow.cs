@@ -41,7 +41,10 @@ namespace LlmLimitsOverlay {
         private TextBlock _txtOrLabel;
         private TextBlock _txtOrPercent;
         private ProgressBar _barOr;
-        private TextBlock _txtOrFreeDaily;
+        private Grid _rowOrFree;
+        private TextBlock _txtOrFreeLabel;
+        private TextBlock _txtOrFreePercent;
+        private ProgressBar _barOrFree;
         private TextBlock _txtOrBalance;
 
         // Gemini
@@ -209,7 +212,8 @@ namespace LlmLimitsOverlay {
             var kimiStack = new StackPanel();
 
             var kimiTitle = CreateHeader("KIMI", OverlayTheme.KimiHeaderColor, new Thickness(0, 0, 0, 4));
-            kimiStack.Children.Add(kimiTitle);
+            _txtKimiUpdated = CreateUpdatedTextBlock();
+            kimiStack.Children.Add(CreateHeaderRow(kimiTitle, _txtKimiUpdated));
 
             // Kimi 7d (Weekly first)
             _rowKimi7d = CreateMetricRow("Лимит 7d", out _txtKimi7dLabel, out _txtKimi7dPercent);
@@ -223,10 +227,6 @@ namespace LlmLimitsOverlay {
             _barKimi5h = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 3), "Лимит 5h");
             kimiStack.Children.Add(_barKimi5h);
 
-            // Per-card updated status inside Kimi
-            _txtKimiUpdated = CreateUpdatedTextBlock();
-            kimiStack.Children.Add(_txtKimiUpdated);
-
             kimiBorder.Child = kimiStack;
             Grid.SetRow(kimiBorder, 0);
             rootGrid.Children.Add(kimiBorder);
@@ -236,20 +236,22 @@ namespace LlmLimitsOverlay {
             var orStack = new StackPanel();
 
             var orTitle = CreateHeader("OPENROUTER", OverlayTheme.OpenRouterHeaderColor, new Thickness(0, 0, 0, 4));
-            orStack.Children.Add(orTitle);
+            _txtOrUpdated = CreateUpdatedTextBlock();
+            orStack.Children.Add(CreateHeaderRow(orTitle, _txtOrUpdated));
 
             _rowOrMonthly = CreateMetricRow("Месячный лимит", out _txtOrLabel, out _txtOrPercent);
             orStack.Children.Add(_rowOrMonthly);
             _barOr = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), "Месячный лимит");
             orStack.Children.Add(_barOr);
 
-            var orMetaGrid = new Grid { Margin = new Thickness(0, 1, 0, 1) };
-            _txtOrFreeDaily = new TextBlock {
-                Text = "free: --/--",
-                FontSize = 9,
-                Foreground = OverlayTheme.MetaTextBrush,
-                FontFamily = OverlayTheme.OverlayFontFamily
-            };
+            // Free daily quota — отдельная строка с прогресс-баром (как лимиты)
+            _rowOrFree = CreateMetricRow(OverlayTheme.FreeDailyTooltip, out _txtOrFreeLabel, out _txtOrFreePercent);
+            orStack.Children.Add(_rowOrFree);
+            _barOrFree = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), OverlayTheme.FreeDailyTooltip);
+            orStack.Children.Add(_barOrFree);
+
+            // Остаток кредита — строкой текста под free-баром
+            var orMetaGrid = new Grid { Margin = new Thickness(0, 2, 0, 0) };
             _txtOrBalance = new TextBlock {
                 Text = "ост. --",
                 FontSize = 9,
@@ -257,13 +259,8 @@ namespace LlmLimitsOverlay {
                 HorizontalAlignment = HorizontalAlignment.Right,
                 FontFamily = OverlayTheme.OverlayFontFamily
             };
-            orMetaGrid.Children.Add(_txtOrFreeDaily);
             orMetaGrid.Children.Add(_txtOrBalance);
             orStack.Children.Add(orMetaGrid);
-
-            // Per-card updated status inside OpenRouter
-            _txtOrUpdated = CreateUpdatedTextBlock();
-            orStack.Children.Add(_txtOrUpdated);
 
             orBorder.Child = orStack;
             Grid.SetRow(orBorder, 1);
@@ -275,7 +272,8 @@ namespace LlmLimitsOverlay {
 
             // Gemini section
             var geminiTitle = CreateHeader("GEMINI", OverlayTheme.GeminiHeaderColor, new Thickness(0, 0, 0, 4));
-            gcStack.Children.Add(geminiTitle);
+            _txtAgyUpdated = CreateUpdatedTextBlock();
+            gcStack.Children.Add(CreateHeaderRow(geminiTitle, _txtAgyUpdated));
 
             // Gemini 7d (Weekly first)
             _rowGemini7d = CreateMetricRow("Лимит 7d", out _txtGemini7dLabel, out _txtGemini7dPercent);
@@ -313,10 +311,6 @@ namespace LlmLimitsOverlay {
             _barClaude5h = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 2), "Лимит 5h");
             gcStack.Children.Add(_barClaude5h);
 
-            // Per-card updated status inside Gemini+Claude/GPT (agy block)
-            _txtAgyUpdated = CreateUpdatedTextBlock();
-            gcStack.Children.Add(_txtAgyUpdated);
-
             geminiClaudeBorder.Child = gcStack;
             Grid.SetRow(geminiClaudeBorder, 2);
             rootGrid.Children.Add(geminiClaudeBorder);
@@ -345,6 +339,20 @@ namespace LlmLimitsOverlay {
                 Margin = margin,
                 FontFamily = OverlayTheme.OverlayFontFamily
             };
+        }
+
+        // Шапка карточки: заголовок слева, возраст данных справа — вровень
+        // по нижней линии (базовой линии) заголовка. Отступ заголовка не меняется.
+        private static Grid CreateHeaderRow(TextBlock title, TextBlock updated) {
+            var grid = new Grid();
+            grid.Margin = title.Margin;
+            title.Margin = new Thickness(0);
+            title.VerticalAlignment = VerticalAlignment.Bottom;
+            updated.VerticalAlignment = VerticalAlignment.Bottom;
+            updated.HorizontalAlignment = HorizontalAlignment.Right;
+            grid.Children.Add(title);
+            grid.Children.Add(updated);
+            return grid;
         }
 
         private Grid CreateMetricRow(string tooltip, out TextBlock label, out TextBlock percent) {
@@ -619,12 +627,25 @@ namespace LlmLimitsOverlay {
                 _rowOrMonthly.ToolTip = orTooltip;
                 _barOr.ToolTip = orTooltip;
 
-                if (or.FreeDailyLimit > 0) {
-                    _txtOrFreeDaily.Text = string.Format("free: {0}/{1}", or.FreeDailyUsed, or.FreeDailyLimit);
-                } else {
-                    _txtOrFreeDaily.Text = "";
+                // Free daily quota — отдельный бар; при лимите 0 строка скрыта
+                bool hasFree = or.FreeDailyLimit > 0;
+                var freeVis = hasFree ? Visibility.Visible : Visibility.Collapsed;
+                if (_rowOrFree != null) _rowOrFree.Visibility = freeVis;
+                if (_barOrFree != null) _barOrFree.Visibility = freeVis;
+                if (hasFree) {
+                    double freeFrac = Math.Max(0.0, Math.Min(1.0, or.FreeDailyUsed / (double)or.FreeDailyLimit));
+                    double freePct = Math.Round(freeFrac * 100.0, 1);
+                    _txtOrFreeLabel.Text = string.Format(OverlayTheme.FreeDailyLabelFormat, or.FreeDailyUsed, or.FreeDailyLimit);
+                    _txtOrFreePercent.Text = freePct + "%";
+                    _txtOrFreePercent.FontWeight = (freeFrac >= 1.0) ? FontWeights.Bold : FontWeights.SemiBold;
+                    _barOrFree.Value = Math.Min(100.0, Math.Max(0.0, freePct));
+                    _barOrFree.Foreground = OverlayTheme.GetProgressBrush(freeFrac);
+                    _txtOrFreePercent.Foreground = OverlayTheme.GetPercentBrush(freeFrac);
+                    string freeTooltip = string.Format(CultureInfo.InvariantCulture, OverlayTheme.FreeDailyTooltip + ": {0} из {1}", or.FreeDailyUsed, or.FreeDailyLimit);
+                    _rowOrFree.ToolTip = freeTooltip;
+                    _barOrFree.ToolTip = freeTooltip;
                 }
-                _txtOrBalance.Text = string.Format(CultureInfo.InvariantCulture, "ост. ${0:0.00}", or.LimitRemaining);
+                _txtOrBalance.Text = string.Format(CultureInfo.InvariantCulture, OverlayTheme.BalanceLabelFormat, or.LimitRemaining);
             }
 
             // Kimi
@@ -695,11 +716,11 @@ namespace LlmLimitsOverlay {
         private static TextBlock CreateUpdatedTextBlock() {
             return new TextBlock {
                 Text = "только что",
-                FontSize = 8.5,
+                FontSize = OverlayTheme.CardUpdatedFontSize,
                 FontWeight = FontWeights.Normal,
                 Foreground = OverlayTheme.MetaTextBrush,
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 1, 0, 1),
+                Margin = new Thickness(0),
                 FontFamily = OverlayTheme.OverlayFontFamily
             };
         }

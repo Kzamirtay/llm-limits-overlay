@@ -136,6 +136,14 @@ namespace LlmLimitsOverlay {
         public const string RelativeTimeStaleSuffix = " (stale)";
         public const string RelativeTimeNoKey = "нет ключа";
 
+        // OpenRouter free-daily quota row (label/tooltip — single point of edit)
+        public const string FreeDailyLabelFormat = "free: {0}/{1}";
+        public const string FreeDailyTooltip = "Бесплатные запросы за день (OpenRouter free tier)";
+        public const string BalanceLabelFormat = "ост. ${0:0.00}";
+
+        // Возраст данных в шапке карточки (вровень с заголовком): на 1px меньше заголовка (11)
+        public const double CardUpdatedFontSize = 10.0;
+
         public static string GetRelativeTimeText(string updatedStr, bool isStale) {
             if (string.IsNullOrEmpty(updatedStr)) {
                 return isStale ? "устарело" : "нет данных";
