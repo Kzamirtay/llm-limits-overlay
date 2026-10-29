@@ -312,14 +312,14 @@ LlmLimitsOverlay-Setup-1.3.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 A companion console utility ships next to the GUI (same fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
 
 ```cmd
-llm-limits.exe                 # aligned table of all three providers
-llm-limits.exe --json         # machine-readable JSON (status, per-provider blocks)
-llm-limits.exe --provider kimi
-llm-limits.exe --watch 30     # refresh loop; Ctrl+C to exit
-llm-limits.exe --no-cache     # bypass the agy /usage cache (forces agy.exe run)
-llm-limits.exe --env .env --agy-bin C:\tools\agy.exe
+llm-limits --json            # works from any folder — installer adds it to your user PATH
+llm-limits --provider kimi
+llm-limits --watch 30        # refresh loop; Ctrl+C to exit
+llm-limits --no-cache        # bypass the agy /usage cache (forces agy.exe run)
+llm-limits --env .env --agy-bin C:\tools\agy.exe
 ```
 
+- The installer adds the install folder to your **user PATH** (task "Add llm-limits.exe to user PATH", enabled by default) so `llm-limits` runs from any terminal. Terminals opened **before** the installation won't see it — open a new terminal window. The entry is removed on uninstall.
 - `--provider kimi|openrouter|agy`, `--env <path>`, `--config <path>`, `--agy-bin <path>` — overrides.
 - `--no-color` and the `NO_COLOR` environment variable disable ANSI colors.
 - In `--watch` mode with redirected (non-TTY) output the tool prints one block per tick instead of redrawing the screen.

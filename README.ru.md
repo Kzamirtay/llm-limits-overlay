@@ -310,14 +310,14 @@ LlmLimitsOverlay-Setup-1.3.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 Рядом с GUI поставляется консольная утилита (тот же движок фетча, те же таймауты и кэш). Выводит статус квот в терминал — удобно для скриптов и быстрых проверок.
 
 ```cmd
-llm-limits.exe                 # выровненная таблица по трём провайдерам
-llm-limits.exe --json         # машиночитаемый JSON (status + блоки провайдеров)
-llm-limits.exe --provider kimi
-llm-limits.exe --watch 30     # цикл обновления; выход — Ctrl+C
-llm-limits.exe --no-cache     # игнорировать кэш agy /usage (форс-запуск agy.exe)
-llm-limits.exe --env .env --agy-bin C:\tools\agy.exe
+llm-limits --json            # работает из любой папки — установщик добавляет её в PATH пользователя
+llm-limits --provider kimi
+llm-limits --watch 30        # цикл обновления; выход — Ctrl+C
+llm-limits --no-cache        # игнорировать кэш agy /usage (форс-запуск agy.exe)
+llm-limits --env .env --agy-bin C:\tools\agy.exe
 ```
 
+- Установщик добавляет папку установки в **PATH пользователя** (задача «Добавить llm-limits.exe в PATH пользователя», включена по умолчанию) — команда `llm-limits` доступна из любого терминала. Терминалы, открытые **до** установки, её не увидят — откройте новое окно терминала. Запись удаляется при деинсталляции.
 - `--provider kimi|openrouter|agy`, `--env <путь>`, `--config <путь>`, `--agy-bin <путь>` — переопределения.
 - `--no-color` и переменная окружения `NO_COLOR` отключают ANSI-цвета.
 - В режиме `--watch` при перенаправленном (не-TTY) выводе печатается блок за тик вместо перерисовки экрана.
