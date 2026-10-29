@@ -15,6 +15,7 @@ namespace LlmLimitsCli {
         public string EnvPath = null;
         public string ConfigPath = null;
         public string AgyBin = null;
+        public int AgyTimeoutSeconds = 0; // 0 = не задан (env/default)
         public bool NoColor = false;
         public bool Help = false;
     }
@@ -121,6 +122,15 @@ namespace LlmLimitsCli {
                         if (i + 1 >= args.Length) { error = "--agy-bin requires a path."; return false; }
                         opt.AgyBin = args[++i];
                         break;
+                    case "--agy-timeout":
+                        if (i + 1 >= args.Length) { error = "--agy-timeout requires seconds (1..120)."; return false; }
+                        int t;
+                        if (!int.TryParse(args[++i], NumberStyles.Integer, CultureInfo.InvariantCulture, out t) || t < 1 || t > 120) {
+                            error = "--agy-timeout value must be an integer 1..120.";
+                            return false;
+                        }
+                        opt.AgyTimeoutSeconds = t;
+                        break;
                     case "--no-color":
                         opt.NoColor = true;
                         break;
@@ -151,6 +161,7 @@ namespace LlmLimitsCli {
             Console.WriteLine("  --env <path>            Use explicit .env file");
             Console.WriteLine("  --config <path>         Use explicit overlay.config.json");
             Console.WriteLine("  --agy-bin <path>        Explicit path to agy.exe");
+            Console.WriteLine("  --agy-timeout <sec>     agy spawn timeout, 1..120 (default: Windows 8s, Linux/macOS 20s; env LLM_LIMITS_AGY_TIMEOUT)");
             Console.WriteLine("  --no-color              Disable ANSI colors (also honors NO_COLOR)");
             Console.WriteLine("  --help                  Show this help");
             Console.WriteLine();
@@ -170,11 +181,31 @@ namespace LlmLimitsCli {
                 (fetching, statusText) => { if (!fetching) done.Set(); },
                 null);
 
+            var cfg = Config.Load();
+
             if (!string.IsNullOrEmpty(opt.EnvPath)) {
                 fetcher.EnvFileOverride = opt.EnvPath;
             }
 
-            fetcher.StartAsyncRefresh(Config.Load());
+            // Таймаут agy: флаг --agy-timeout > env LLM_LIMITS_AGY_TIMEOUT > платформенный дефолт
+            if (opt.AgyTimeoutSeconds > 0) {
+                fetcher.AgyTimeoutSeconds = opt.AgyTimeoutSeconds;
+            } else {
+                string envT = Environment.GetEnvironmentVariable("LLM_LIMITS_AGY_TIMEOUT");
+                int t;
+                if (!string.IsNullOrEmpty(envT)
+                    && int.TryParse(envT.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out t)
+                    && t >= 1 && t <= 120) {
+                    fetcher.AgyTimeoutSeconds = t;
+                }
+            }
+
+            // Общий бюджет цикла должен покрывать таймаут agy + запас
+            if (cfg.TimeoutSeconds < fetcher.AgyTimeoutSeconds + 5) {
+                cfg.TimeoutSeconds = fetcher.AgyTimeoutSeconds + 5;
+            }
+
+            fetcher.StartAsyncRefresh(cfg);
 
             // Overall safety timeout: 8s agy + slack
             if (!done.Wait(25000)) {

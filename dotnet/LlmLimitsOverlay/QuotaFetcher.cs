@@ -21,8 +21,20 @@ namespace LlmLimitsOverlay {
 
     public class QuotaFetcher {
         private const double HttpTimeoutSeconds = 3.5;
-        private const int AgyTimeoutSeconds = 8;
         private const double DefaultAgyCacheTtlSeconds = 300.0;
+
+        // Таймаут agy: платформенный дефолт (Windows 8с, Linux/macOS 20с),
+        // может переопределяться хостом (CLI: --agy-timeout / LLM_LIMITS_AGY_TIMEOUT).
+        private static int PlatformDefaultAgyTimeout() {
+            return System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows) ? 8 : 20;
+        }
+
+        private int _agyTimeoutSeconds = PlatformDefaultAgyTimeout();
+        public int AgyTimeoutSeconds {
+            get { return _agyTimeoutSeconds; }
+            set { if (value >= 1 && value <= 120) _agyTimeoutSeconds = value; }
+        }
 
         private readonly string _appDirectory;
         private readonly string _limitsJsonPath;
