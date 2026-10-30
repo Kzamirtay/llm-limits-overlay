@@ -21,6 +21,7 @@
     <Compile Include="..\LlmLimitsOverlay\Logger.cs" Link="Logger.cs" />
     <Compile Include="..\LlmLimitsOverlay\AgyResolver.cs" Link="AgyResolver.cs" />
     <Compile Include="..\LlmLimitsOverlay\Config.cs" Link="Config.cs" />
+    <Compile Include="..\LlmLimitsOverlay\ProviderConfig.cs" Link="ProviderConfig.cs" />
   </ItemGroup>
 
 </Project>

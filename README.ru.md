@@ -204,6 +204,31 @@
 - `clickThrough`: режим «клики насквозь» при запуске оверлея (по умолчанию `true`, включено). Задайте `false`, если требуется запуск в интерактивном режиме.
 - `clickThroughHotkey`: глобальная комбинация клавиш для быстрого переключения режима (по умолчанию `"Ctrl+Alt+L"`, поддерживает модификаторы Ctrl, Alt, Shift, Win и клавиши).
 
+### Провайдеры в конфиге
+
+По умолчанию оверлей показывает встроенную тройку: **KIMI**, **OPENROUTER**, **GEMINI + CLAUDE/GPT**. Список можно переопределить массивом `providers` в `overlay.config.json` — карточки строятся динамически и в GUI, и в CLI:
+
+```json
+{
+  "providers": [
+    { "id": "kimi", "type": "kimi", "title": "KIMI", "apiKeyEnv": "KIMI_API_KEY" },
+    { "id": "openrouter", "type": "openrouter", "title": "OPENROUTER", "apiKeyEnv": "OPENROUTER_API_KEY" },
+    { "id": "or2", "type": "openrouter", "title": "OPENROUTER 2", "apiKeyEnv": "OPENROUTER_API_KEY_2" },
+    { "id": "kimi2", "type": "kimi", "title": "KIMI 2", "apiKeyEnv": "KIMI_API_KEY_2" },
+    { "id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT" }
+  ]
+}
+```
+
+- `id`: уникальный ключ — блок провайдера в `limits.json` лежит как `data.<id>` (обратная совместимость: `kimi`/`openrouter` сохраняют прежний формат).
+- `type`: `kimi` (окна 5ч/7д из `{baseUrl или https://api.kimi.com/coding/v1}/usages`) | `openrouter` (кредиты + free-пул из `{baseUrl или https://openrouter.ai/api/v1}/key`) | `agy` (нативный `agy.exe`). **Неизвестный type пропускается с предупреждением в логе — новый провайдер = новый тип в коде.**
+- `title`: заголовок карточки.
+- `apiKeyEnv`: имя переменной в `.env`/окружении с ключом. Несколько записей одного типа = несколько карточек со своими ключами (`apiKey` инлайн тоже допустим, но лучше `apiKeyEnv` — инлайн-ключ окажется в файле конфигурации).
+- `enabled: false` — карточка скрыта.
+- `baseUrl` *(опционально)*: переопределение эндпоинта для прокси/зеркала (обычно не нужно).
+- Полей `quota`/`probe` нет — каждый тип сохраняет свою логику фетча как есть.
+- Если `providers` отсутствует — используются встроенные дефолты, старый конфиг работает без правки.
+
 ### Переменные окружения
 
 - `LLM_LIMITS_AGY_BIN`: явный путь к `agy.exe`.

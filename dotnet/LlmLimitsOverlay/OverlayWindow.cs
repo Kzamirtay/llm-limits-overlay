@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -22,32 +23,30 @@ namespace LlmLimitsOverlay {
         private const double MarginBottom = 4.0;
 
         // UI controls
-        // Per-card updated lines (_txtKimiUpdated/_txtOrUpdated/_txtAgyUpdated)
-        // are declared below together with their relative-time state.
+        // Динамические карточки провайдеров (kimi/openrouter) — список ниже;
+        // аги-карточка остаётся статической (одна, комбинированная).
 
-        // Kimi
-        private Grid _rowKimi7d;
-        private TextBlock _txtKimi7dLabel;
-        private TextBlock _txtKimi7dPercent;
-        private ProgressBar _barKimi7d;
+        // Динамическая карточка провайдера (kimi/openrouter-типы)
+        private class ProviderCard {
+            public string Id;
+            public string Kind; // kimi | openrouter
+            public Border Root;
+            public TextBlock TxtUpdated;
+            public string UpdatedStr = "";
+            public bool Stale = false;
+            public string Status = "online";
+            // kimi
+            public Grid Row7d; public TextBlock Lbl7d; public TextBlock Pct7d; public ProgressBar Bar7d;
+            public Grid Row5h; public TextBlock Lbl5h; public TextBlock Pct5h; public ProgressBar Bar5h;
+            // openrouter
+            public Grid RowMain; public TextBlock LblMain; public TextBlock PctMain; public ProgressBar BarMain;
+            public Grid RowFree; public TextBlock LblFree; public TextBlock PctFree; public ProgressBar BarFree;
+            public TextBlock TxtBalance;
+        }
 
-        private Grid _rowKimi5h;
-        private TextBlock _txtKimi5hLabel;
-        private TextBlock _txtKimi5hPercent;
-        private ProgressBar _barKimi5h;
+        private readonly List<ProviderCard> _cards = new List<ProviderCard>();
 
-        // OpenRouter
-        private Grid _rowOrMonthly;
-        private TextBlock _txtOrLabel;
-        private TextBlock _txtOrPercent;
-        private ProgressBar _barOr;
-        private Grid _rowOrFree;
-        private TextBlock _txtOrFreeLabel;
-        private TextBlock _txtOrFreePercent;
-        private ProgressBar _barOrFree;
-        private TextBlock _txtOrBalance;
-
-        // Gemini
+        // Gemini + Claude/GPT (аги) — статическая комбинированная карточка
         private Grid _rowGemini7d;
         private TextBlock _txtGemini7dLabel;
         private TextBlock _txtGemini7dPercent;
@@ -82,18 +81,8 @@ namespace LlmLimitsOverlay {
 
         private QuotaSnapshot _lastSnapshot;
 
-        // Per-card relative-time state (Kimi / OpenRouter / Gemini+Claude-GPT).
-        // Strings and time format live in OverlayTheme.GetRelativeTimeText —
-        // single point of edit for wording/format of all three card lines.
-        private TextBlock _txtKimiUpdated;
-        private TextBlock _txtOrUpdated;
+        // Возраст аги-карточки (динамические карточки хранят состояние в _cards)
         private TextBlock _txtAgyUpdated;
-        private string _kimiUpdatedStr;
-        private bool _kimiStale = false;
-        private string _kimiStatus = "online";
-        private string _orUpdatedStr;
-        private bool _orStale = false;
-        private string _orStatus = "online";
         private string _agyUpdatedStr;
         private bool _agyStale = false;
         private string _agyStatus = "online";
@@ -203,74 +192,85 @@ namespace LlmLimitsOverlay {
                 Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x01, 0, 0, 0)),
                 Margin = new Thickness(6, 6, 6, 12)
             };
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            // 1. KIMI Pod (Row 0)
-            var kimiBorder = CreatePodBorder(new Thickness(0, 0, 0, 6), new Thickness(10, 8, 10, 8));
-            var kimiStack = new StackPanel();
+            // Карточки строятся из списка провайдеров конфига (дефолты — kimi/openrouter/agy)
+            var providers = (_config != null ? _config.GetEffectiveProviders() : ProviderConfig.GetDefaults());
+            int row = 0;
+            foreach (var p in providers) {
+                if (!p.Enabled) continue;
+                rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            var kimiTitle = CreateHeader("KIMI", OverlayTheme.KimiHeaderColor, new Thickness(0, 0, 0, 4));
-            _txtKimiUpdated = CreateUpdatedTextBlock();
-            kimiStack.Children.Add(CreateHeaderRow(kimiTitle, _txtKimiUpdated));
+                if (p.Type == "agy") {
+                    var agyCard = BuildAgyCard(p);
+                    Grid.SetRow(agyCard, row);
+                    rootGrid.Children.Add(agyCard);
+                } else {
+                    var card = BuildProviderCard(p);
+                    _cards.Add(card);
+                    Grid.SetRow(card.Root, row);
+                    rootGrid.Children.Add(card.Root);
+                }
+                row++;
+            }
 
-            // Kimi 7d (Weekly first)
-            _rowKimi7d = CreateMetricRow("Лимит 7d", out _txtKimi7dLabel, out _txtKimi7dPercent);
-            kimiStack.Children.Add(_rowKimi7d);
-            _barKimi7d = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 7), "Лимит 7d");
-            kimiStack.Children.Add(_barKimi7d);
+            Content = rootGrid;
+        }
 
-            // Kimi 5h
-            _rowKimi5h = CreateMetricRow("Лимит 5h", out _txtKimi5hLabel, out _txtKimi5hPercent);
-            kimiStack.Children.Add(_rowKimi5h);
-            _barKimi5h = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 3), "Лимит 5h");
-            kimiStack.Children.Add(_barKimi5h);
+        // Динамическая карточка kimi/openrouter-типа (title из конфига)
+        private ProviderCard BuildProviderCard(ProviderConfig p) {
+            var card = new ProviderCard { Id = p.Id, Kind = p.Type };
+            card.Root = CreatePodBorder(new Thickness(0, 0, 0, 6), new Thickness(10, 8, 10, 8));
+            var stack = new StackPanel();
 
-            kimiBorder.Child = kimiStack;
-            Grid.SetRow(kimiBorder, 0);
-            rootGrid.Children.Add(kimiBorder);
+            var color = p.Type == "openrouter" ? OverlayTheme.OpenRouterHeaderColor : OverlayTheme.KimiHeaderColor;
+            var title = CreateHeader(p.Title, color, new Thickness(0, 0, 0, 4));
+            card.TxtUpdated = CreateUpdatedTextBlock();
+            stack.Children.Add(CreateHeaderRow(title, card.TxtUpdated));
 
-            // 2. OPENROUTER Pod (Row 1)
-            var orBorder = CreatePodBorder(new Thickness(0, 0, 0, 6), new Thickness(10, 8, 10, 8));
-            var orStack = new StackPanel();
+            if (p.Type == "openrouter") {
+                card.RowMain = CreateMetricRow("Месячный лимит", out card.LblMain, out card.PctMain);
+                stack.Children.Add(card.RowMain);
+                card.BarMain = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), "Месячный лимит");
+                stack.Children.Add(card.BarMain);
 
-            var orTitle = CreateHeader("OPENROUTER", OverlayTheme.OpenRouterHeaderColor, new Thickness(0, 0, 0, 4));
-            _txtOrUpdated = CreateUpdatedTextBlock();
-            orStack.Children.Add(CreateHeaderRow(orTitle, _txtOrUpdated));
+                card.RowFree = CreateMetricRow(OverlayTheme.FreeDailyTooltip, out card.LblFree, out card.PctFree);
+                stack.Children.Add(card.RowFree);
+                card.BarFree = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), OverlayTheme.FreeDailyTooltip);
+                stack.Children.Add(card.BarFree);
 
-            _rowOrMonthly = CreateMetricRow("Месячный лимит", out _txtOrLabel, out _txtOrPercent);
-            orStack.Children.Add(_rowOrMonthly);
-            _barOr = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), "Месячный лимит");
-            orStack.Children.Add(_barOr);
+                var metaGrid = new Grid { Margin = new Thickness(0, 2, 0, 0) };
+                card.TxtBalance = new TextBlock {
+                    Text = "ост. --",
+                    FontSize = 9,
+                    Foreground = OverlayTheme.MetaTextBrush,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    FontFamily = OverlayTheme.OverlayFontFamily
+                };
+                metaGrid.Children.Add(card.TxtBalance);
+                stack.Children.Add(metaGrid);
+            } else {
+                // kimi: окна 7d (сверху) и 5h
+                card.Row7d = CreateMetricRow("Лимит 7d", out card.Lbl7d, out card.Pct7d);
+                stack.Children.Add(card.Row7d);
+                card.Bar7d = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 7), "Лимит 7d");
+                stack.Children.Add(card.Bar7d);
 
-            // Free daily quota — отдельная строка с прогресс-баром (как лимиты)
-            _rowOrFree = CreateMetricRow(OverlayTheme.FreeDailyTooltip, out _txtOrFreeLabel, out _txtOrFreePercent);
-            orStack.Children.Add(_rowOrFree);
-            _barOrFree = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), OverlayTheme.FreeDailyTooltip);
-            orStack.Children.Add(_barOrFree);
+                card.Row5h = CreateMetricRow("Лимит 5h", out card.Lbl5h, out card.Pct5h);
+                stack.Children.Add(card.Row5h);
+                card.Bar5h = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 3), "Лимит 5h");
+                stack.Children.Add(card.Bar5h);
+            }
 
-            // Остаток кредита — строкой текста под free-баром
-            var orMetaGrid = new Grid { Margin = new Thickness(0, 2, 0, 0) };
-            _txtOrBalance = new TextBlock {
-                Text = "ост. --",
-                FontSize = 9,
-                Foreground = OverlayTheme.MetaTextBrush,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                FontFamily = OverlayTheme.OverlayFontFamily
-            };
-            orMetaGrid.Children.Add(_txtOrBalance);
-            orStack.Children.Add(orMetaGrid);
+            card.Root.Child = stack;
+            return card;
+        }
 
-            orBorder.Child = orStack;
-            Grid.SetRow(orBorder, 1);
-            rootGrid.Children.Add(orBorder);
-
-            // 3. Merged GEMINI & CLAUDE/GPT Pod (Row 2)
+        // Аги-карточка (Gemini + Claude/GPT) — статическая комбинированная
+        private Border BuildAgyCard(ProviderConfig p) {
             var geminiClaudeBorder = CreatePodBorder(new Thickness(0, 0, 0, 0), new Thickness(10, 8, 10, 11));
             var gcStack = new StackPanel();
 
-            // Gemini section
+            // Gemini section header + возраст данных карточки справа
             var geminiTitle = CreateHeader("GEMINI", OverlayTheme.GeminiHeaderColor, new Thickness(0, 0, 0, 4));
             _txtAgyUpdated = CreateUpdatedTextBlock();
             gcStack.Children.Add(CreateHeaderRow(geminiTitle, _txtAgyUpdated));
@@ -312,10 +312,7 @@ namespace LlmLimitsOverlay {
             gcStack.Children.Add(_barClaude5h);
 
             geminiClaudeBorder.Child = gcStack;
-            Grid.SetRow(geminiClaudeBorder, 2);
-            rootGrid.Children.Add(geminiClaudeBorder);
-
-            Content = rootGrid;
+            return geminiClaudeBorder;
         }
 
         private Border CreatePodBorder(Thickness margin, Thickness padding) {
@@ -566,13 +563,11 @@ namespace LlmLimitsOverlay {
         private void OnFetchStateChanged(bool isFetching, string statusText) {
             if (_menuRefresh != null) _menuRefresh.IsEnabled = !isFetching;
             if (!string.IsNullOrEmpty(statusText)) {
-                if (_txtKimiUpdated != null) {
-                    _txtKimiUpdated.Text = statusText;
-                    _txtKimiUpdated.Foreground = OverlayTheme.MetaTextBrush;
-                }
-                if (_txtOrUpdated != null) {
-                    _txtOrUpdated.Text = statusText;
-                    _txtOrUpdated.Foreground = OverlayTheme.MetaTextBrush;
+                foreach (var card in _cards) {
+                    if (card.TxtUpdated != null) {
+                        card.TxtUpdated.Text = statusText;
+                        card.TxtUpdated.Foreground = OverlayTheme.MetaTextBrush;
+                    }
                 }
                 if (_txtAgyUpdated != null) {
                     _txtAgyUpdated.Text = statusText;
@@ -581,22 +576,26 @@ namespace LlmLimitsOverlay {
             }
         }
 
+        private static ProviderState FindProviderState(QuotaSnapshot snap, string id) {
+            if (snap == null || snap.Providers == null) return null;
+            foreach (var ps in snap.Providers) {
+                if (string.Equals(ps.Id, id, StringComparison.OrdinalIgnoreCase)) return ps;
+            }
+            return null;
+        }
+
         private void OnDataLoaded(QuotaSnapshot snapshot) {
             _lastSnapshot = snapshot;
 
             bool globalStale = (snapshot.Status != "online");
 
-            _kimiUpdatedStr = !string.IsNullOrEmpty(snapshot.Kimi.LastUpdated) ? snapshot.Kimi.LastUpdated : snapshot.LastUpdated;
-            _kimiStale = globalStale || snapshot.Kimi.Status == "stale";
-            _kimiStatus = snapshot.Kimi.Status;
-
-            _orUpdatedStr = !string.IsNullOrEmpty(snapshot.OpenRouter.LastUpdated) ? snapshot.OpenRouter.LastUpdated : snapshot.LastUpdated;
-            _orStale = globalStale || snapshot.OpenRouter.Status == "stale";
-            _orStatus = snapshot.OpenRouter.Status;
-
             _agyUpdatedStr = !string.IsNullOrEmpty(snapshot.AgyLastUpdated) ? snapshot.AgyLastUpdated : snapshot.LastUpdated;
             _agyStale = globalStale || snapshot.AgyStatus == "stale";
             _agyStatus = snapshot.AgyStatus;
+
+            foreach (var card in _cards) {
+                UpdateProviderCard(card, snapshot, globalStale);
+            }
 
             UpdateRelativeTimeText();
 
@@ -612,58 +611,61 @@ namespace LlmLimitsOverlay {
             // Claude 5h
             UpdateBucketRow(_rowClaude5h, _txtClaude5hLabel, _txtClaude5hPercent, _barClaude5h, snapshot.Claude5h, "5h");
 
-            // OpenRouter
-            var or = snapshot.OpenRouter;
-            if (or != null) {
-                _txtOrLabel.Text = OverlayTheme.FormatResetTimeLabel(or.ResetIn);
-                _txtOrPercent.Text = or.UsedPercent + "%";
-                _barOr.Value = Math.Min(100.0, Math.Max(0.0, or.UsedPercent));
-                _barOr.Foreground = OverlayTheme.GetProgressBrush(or.UsedFraction);
-                _txtOrPercent.Foreground = OverlayTheme.GetPercentBrush(or.UsedFraction);
-                _txtOrPercent.FontWeight = (or.UsedFraction >= 1.0 || or.UsedPercent >= 100.0) ? FontWeights.Bold : FontWeights.SemiBold;
-
-                string orTooltip = string.Format(CultureInfo.InvariantCulture, "${0:0.00} из ${1:0.00} • осталось ${2:0.00} • сброс {3}",
-                    or.Usage, or.Limit, or.LimitRemaining, or.LimitReset);
-                _rowOrMonthly.ToolTip = orTooltip;
-                _barOr.ToolTip = orTooltip;
-
-                // Free daily quota — отдельный бар; при лимите 0 строка скрыта
-                bool hasFree = or.FreeDailyLimit > 0;
-                var freeVis = hasFree ? Visibility.Visible : Visibility.Collapsed;
-                if (_rowOrFree != null) _rowOrFree.Visibility = freeVis;
-                if (_barOrFree != null) _barOrFree.Visibility = freeVis;
-                if (hasFree) {
-                    double freeFrac = Math.Max(0.0, Math.Min(1.0, or.FreeDailyUsed / (double)or.FreeDailyLimit));
-                    double freePct = Math.Round(freeFrac * 100.0, 1);
-                    _txtOrFreeLabel.Text = string.Format(OverlayTheme.FreeDailyLabelFormat, or.FreeDailyUsed, or.FreeDailyLimit);
-                    _txtOrFreePercent.Text = freePct + "%";
-                    _txtOrFreePercent.FontWeight = (freeFrac >= 1.0) ? FontWeights.Bold : FontWeights.SemiBold;
-                    _barOrFree.Value = Math.Min(100.0, Math.Max(0.0, freePct));
-                    _barOrFree.Foreground = OverlayTheme.GetProgressBrush(freeFrac);
-                    _txtOrFreePercent.Foreground = OverlayTheme.GetPercentBrush(freeFrac);
-                    string freeTooltip = string.Format(CultureInfo.InvariantCulture, OverlayTheme.FreeDailyTooltip + ": {0} из {1}", or.FreeDailyUsed, or.FreeDailyLimit);
-                    _rowOrFree.ToolTip = freeTooltip;
-                    _barOrFree.ToolTip = freeTooltip;
-                }
-                _txtOrBalance.Text = string.Format(CultureInfo.InvariantCulture, OverlayTheme.BalanceLabelFormat, or.LimitRemaining);
-            }
-
-            // Kimi
-            var k = snapshot.Kimi;
-            if (k != null) {
-                // Kimi 7d (Weekly first)
-                UpdateKimiBucket(_rowKimi7d, _txtKimi7dLabel, _txtKimi7dPercent, _barKimi7d, k.Limit7d, "Недельное окно");
-
-                // Kimi 5h
-                UpdateKimiBucket(_rowKimi5h, _txtKimi5hLabel, _txtKimi5hPercent, _barKimi5h, k.Limit5h, "5-часовое окно");
-            }
-
             try {
                 UpdateLayout();
                 UpdateOverlayPosition();
             } catch { }
 
             UpdateTrayTooltip();
+        }
+
+        private void UpdateProviderCard(ProviderCard card, QuotaSnapshot snapshot, bool globalStale) {
+            var st = FindProviderState(snapshot, card.Id);
+            if (st == null) return;
+
+            card.Status = st.Status;
+            card.UpdatedStr = !string.IsNullOrEmpty(st.LastUpdated) ? st.LastUpdated : snapshot.LastUpdated;
+            card.Stale = globalStale || st.Status == "stale";
+
+            if (card.Kind == "openrouter") {
+                var or = st.OpenRouter;
+                if (or == null) return;
+                card.LblMain.Text = OverlayTheme.FormatResetTimeLabel(or.ResetIn);
+                card.PctMain.Text = or.UsedPercent + "%";
+                card.BarMain.Value = Math.Min(100.0, Math.Max(0.0, or.UsedPercent));
+                card.BarMain.Foreground = OverlayTheme.GetProgressBrush(or.UsedFraction);
+                card.PctMain.Foreground = OverlayTheme.GetPercentBrush(or.UsedFraction);
+                card.PctMain.FontWeight = (or.UsedFraction >= 1.0 || or.UsedPercent >= 100.0) ? FontWeights.Bold : FontWeights.SemiBold;
+
+                string orTooltip = string.Format(CultureInfo.InvariantCulture, "${0:0.00} из ${1:0.00} • осталось ${2:0.00} • сброс {3}",
+                    or.Usage, or.Limit, or.LimitRemaining, or.LimitReset);
+                card.RowMain.ToolTip = orTooltip;
+                card.BarMain.ToolTip = orTooltip;
+
+                bool hasFree = or.FreeDailyLimit > 0;
+                var freeVis = hasFree ? Visibility.Visible : Visibility.Collapsed;
+                if (card.RowFree != null) card.RowFree.Visibility = freeVis;
+                if (card.BarFree != null) card.BarFree.Visibility = freeVis;
+                if (hasFree) {
+                    double freeFrac = Math.Max(0.0, Math.Min(1.0, or.FreeDailyUsed / (double)or.FreeDailyLimit));
+                    double freePct = Math.Round(freeFrac * 100.0, 1);
+                    card.LblFree.Text = string.Format(OverlayTheme.FreeDailyLabelFormat, or.FreeDailyUsed, or.FreeDailyLimit);
+                    card.PctFree.Text = freePct + "%";
+                    card.PctFree.FontWeight = (freeFrac >= 1.0) ? FontWeights.Bold : FontWeights.SemiBold;
+                    card.BarFree.Value = Math.Min(100.0, Math.Max(0.0, freePct));
+                    card.BarFree.Foreground = OverlayTheme.GetProgressBrush(freeFrac);
+                    card.PctFree.Foreground = OverlayTheme.GetPercentBrush(freeFrac);
+                    string freeTooltip = string.Format(CultureInfo.InvariantCulture, OverlayTheme.FreeDailyTooltip + ": {0} из {1}", or.FreeDailyUsed, or.FreeDailyLimit);
+                    card.RowFree.ToolTip = freeTooltip;
+                    card.BarFree.ToolTip = freeTooltip;
+                }
+                card.TxtBalance.Text = string.Format(CultureInfo.InvariantCulture, OverlayTheme.BalanceLabelFormat, or.LimitRemaining);
+            } else {
+                var k = st.Kimi;
+                if (k == null) return;
+                UpdateKimiBucket(card.Row7d, card.Lbl7d, card.Pct7d, card.Bar7d, k.Limit7d, "Недельное окно");
+                UpdateKimiBucket(card.Row5h, card.Lbl5h, card.Pct5h, card.Bar5h, k.Limit5h, "5-часовое окно");
+            }
         }
 
         private void UpdateBucketRow(Grid row, TextBlock lbl, TextBlock pct, ProgressBar bar, BucketInfo b, string windowType) {
@@ -697,8 +699,9 @@ namespace LlmLimitsOverlay {
         }
 
         private void UpdateRelativeTimeText() {
-            UpdateCardUpdatedLine(_txtKimiUpdated, _kimiUpdatedStr, _kimiStale, _kimiStatus);
-            UpdateCardUpdatedLine(_txtOrUpdated, _orUpdatedStr, _orStale, _orStatus);
+            foreach (var card in _cards) {
+                UpdateCardUpdatedLine(card.TxtUpdated, card.UpdatedStr, card.Stale, card.Status);
+            }
             UpdateCardUpdatedLine(_txtAgyUpdated, _agyUpdatedStr, _agyStale, _agyStatus);
         }
 

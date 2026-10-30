@@ -22,6 +22,16 @@ namespace LlmLimitsOverlay {
         public bool TestHooks { get; set; }
         public string ClickThroughHotkey { get; set; }
         public bool ClickThrough { get; set; }
+        // Кастомные провайдеры из overlay.config.json; пусто = встроенные дефолты.
+        public List<ProviderConfig> Providers { get; set; }
+
+        public bool HasCustomProviders {
+            get { return Providers != null && Providers.Count > 0; }
+        }
+
+        public List<ProviderConfig> GetEffectiveProviders() {
+            return HasCustomProviders ? Providers : ProviderConfig.GetDefaults();
+        }
 
         public Config() {
             Backend = "native";
@@ -29,6 +39,7 @@ namespace LlmLimitsOverlay {
             TestHooks = false;
             ClickThroughHotkey = "Ctrl+Alt+L";
             ClickThrough = true;
+            Providers = new List<ProviderConfig>();
         }
 
         public static void Initialize(string appDirectory) {
@@ -63,6 +74,7 @@ namespace LlmLimitsOverlay {
                     cfg.TestHooks = SimpleJson.GetBool(dict, "testHooks", false);
                     cfg.ClickThroughHotkey = SimpleJson.GetString(dict, "clickThroughHotkey", "Ctrl+Alt+L");
                     cfg.ClickThrough = SimpleJson.GetBool(dict, "clickThrough", true);
+                    cfg.Providers = ProviderConfig.ParseList(dict.ContainsKey("providers") ? dict["providers"] : null);
                 }
             } catch (Exception ex) {
                 Logger.Log("Error reading " + _configFilePath + ": " + ex.Message);
@@ -118,6 +130,10 @@ namespace LlmLimitsOverlay {
                     } else {
                         sb.Append(d.ToString(CultureInfo.InvariantCulture));
                     }
+                } else if (val is Dictionary<string, object>) {
+                    AppendJsonValue(sb, val);
+                } else if (val is List<object>) {
+                    AppendJsonValue(sb, val);
                 } else {
                     sb.Append("\"");
                     string s = val.ToString();
@@ -141,6 +157,56 @@ namespace LlmLimitsOverlay {
 
             sb.Append("}");
             return sb.ToString();
+        }
+
+        // Рекурсивная сериализация вложенных объектов/массивов (например, providers),
+        // чтобы SaveField не ломал не-скалярные ключи при перезаписи конфига.
+        private static void AppendJsonValue(StringBuilder sb, object val) {
+            if (val == null) {
+                sb.Append("null");
+            } else if (val is bool) {
+                sb.Append((bool)val ? "true" : "false");
+            } else if (val is int || val is long || val is short || val is byte) {
+                sb.Append(val.ToString());
+            } else if (val is double || val is float || val is decimal) {
+                double d = Convert.ToDouble(val);
+                if (Math.Floor(d) == d) sb.Append(((long)d).ToString());
+                else sb.Append(d.ToString(CultureInfo.InvariantCulture));
+            } else if (val is Dictionary<string, object>) {
+                var d = (Dictionary<string, object>)val;
+                sb.Append("{");
+                bool first = true;
+                foreach (var kv in d) {
+                    if (!first) sb.Append(",");
+                    first = false;
+                    sb.Append("\"");
+                    sb.Append(kv.Key);
+                    sb.Append("\":");
+                    AppendJsonValue(sb, kv.Value);
+                }
+                sb.Append("}");
+            } else if (val is List<object>) {
+                var l = (List<object>)val;
+                sb.Append("[");
+                for (int i = 0; i < l.Count; i++) {
+                    if (i > 0) sb.Append(",");
+                    AppendJsonValue(sb, l[i]);
+                }
+                sb.Append("]");
+            } else {
+                sb.Append("\"");
+                string s = val.ToString();
+                for (int j = 0; j < s.Length; j++) {
+                    char c = s[j];
+                    if (c == '"') sb.Append("\\\"");
+                    else if (c == '\\') sb.Append("\\\\");
+                    else if (c == '\r') sb.Append("\\r");
+                    else if (c == '\n') sb.Append("\\n");
+                    else if (c == '\t') sb.Append("\\t");
+                    else sb.Append(c);
+                }
+                sb.Append("\"");
+            }
         }
 
         public static void SaveField(string field, object value) {

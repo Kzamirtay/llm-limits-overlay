@@ -54,7 +54,7 @@ echo Output: %BIN_DIR%\llm-limits.exe
 echo =======================================================
 
 set "CLI_TARGET_EXE=%BIN_DIR%\llm-limits.exe"
-"%CSC%" /nologo /t:exe /platform:anycpu /optimize+ /out:"%CLI_TARGET_EXE%" /r:System.Core.dll,System.dll "%SCRIPT_DIR%LlmLimitsCli\Program.cs" "%SRC_DIR%\SimpleJson.cs" "%SRC_DIR%\Logger.cs" "%SRC_DIR%\EnvParser.cs" "%SRC_DIR%\AgyResolver.cs" "%SRC_DIR%\Config.cs" "%SRC_DIR%\Models.cs" "%SRC_DIR%\QuotaFetcher.cs"
+"%CSC%" /nologo /t:exe /platform:anycpu /optimize+ /out:"%CLI_TARGET_EXE%" /r:System.Core.dll,System.dll "%SCRIPT_DIR%LlmLimitsCli\Program.cs" "%SRC_DIR%\SimpleJson.cs" "%SRC_DIR%\Logger.cs" "%SRC_DIR%\EnvParser.cs" "%SRC_DIR%\AgyResolver.cs" "%SRC_DIR%\Config.cs" "%SRC_DIR%\ProviderConfig.cs" "%SRC_DIR%\Models.cs" "%SRC_DIR%\QuotaFetcher.cs"
 
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] CLI build failed with exit code %ERRORLEVEL%.

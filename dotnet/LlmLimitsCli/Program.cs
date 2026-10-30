@@ -63,6 +63,18 @@ namespace LlmLimitsCli {
             // Logger: file only (CLI stdout/stderr must stay clean)
             Logger.Initialize(appDir);
 
+            _providers = config.GetEffectiveProviders();
+            if (!string.IsNullOrEmpty(opt.Provider)) {
+                bool found = false;
+                foreach (var p in _providers) {
+                    if (string.Equals(p.Id, opt.Provider, StringComparison.OrdinalIgnoreCase)) found = true;
+                }
+                if (!found) {
+                    Console.Error.WriteLine("llm-limits: unknown provider id '" + opt.Provider + "' (check overlay.config.json providers).");
+                    return 1;
+                }
+            }
+
             if (opt.WatchSeconds > 0) {
                 return RunWatch(opt, appDir, config);
             }
@@ -91,12 +103,8 @@ namespace LlmLimitsCli {
                         opt.Json = true;
                         break;
                     case "--provider":
-                        if (i + 1 >= args.Length) { error = "--provider requires a value (kimi|openrouter|agy)."; return false; }
+                        if (i + 1 >= args.Length) { error = "--provider requires a provider id."; return false; }
                         opt.Provider = args[++i].Trim().ToLowerInvariant();
-                        if (opt.Provider != "kimi" && opt.Provider != "openrouter" && opt.Provider != "agy") {
-                            error = "unknown provider '" + opt.Provider + "' (expected kimi|openrouter|agy).";
-                            return false;
-                        }
                         break;
                     case "--watch":
                         if (i + 1 >= args.Length) { error = "--watch requires seconds value."; return false; }
@@ -255,33 +263,48 @@ namespace LlmLimitsCli {
         // ------------------------------------------------------------------
         // Rendering
         // ------------------------------------------------------------------
+        static List<ProviderConfig> _providers;
+
+        static ProviderState FindState(QuotaSnapshot snap, string id) {
+            if (snap == null || snap.Providers == null) return null;
+            foreach (var ps in snap.Providers) {
+                if (string.Equals(ps.Id, id, StringComparison.OrdinalIgnoreCase)) return ps;
+            }
+            return null;
+        }
+
         static void Render(CliOptions opt, QuotaSnapshot snap) {
             if (opt.Json) {
                 Console.WriteLine(SimpleJson.Serialize(BuildJsonPayload(opt, snap), true));
                 return;
             }
 
-            if (opt.Provider == null || opt.Provider == "kimi") {
-                RenderProviderHeader("KIMI", snap.Kimi.Status, snap.Kimi.LastUpdated);
-                RenderBucket("  7d", snap.Kimi.Limit7d);
-                RenderBucket("  5h", snap.Kimi.Limit5h);
-            }
-            if (opt.Provider == null || opt.Provider == "openrouter") {
-                RenderProviderHeader("OPENROUTER", snap.OpenRouter.Status, snap.OpenRouter.LastUpdated);
-                var or = snap.OpenRouter;
-                string pct = or.Limit > 0 ? or.UsedPercent.ToString("0.#", CultureInfo.InvariantCulture) + "% used"
-                                          : or.UsedPercent.ToString("0.#", CultureInfo.InvariantCulture) + "% used (no limit)";
-                Console.WriteLine("       " + pct
-                    + "  reset " + Safe(or.ResetIn)
-                    + "  free " + or.FreeDailyUsed + "/" + or.FreeDailyLimit
-                    + "  rem. $" + or.LimitRemaining.ToString("0.00", CultureInfo.InvariantCulture));
-            }
-            if (opt.Provider == null || opt.Provider == "agy") {
-                RenderProviderHeader("GEMINI + CLAUDE/GPT", snap.AgyStatus, snap.AgyLastUpdated);
-                RenderBucket("  gemini 7d", snap.GeminiWeekly);
-                RenderBucket("  gemini 5h", snap.Gemini5h);
-                RenderBucket("  claude 7d", snap.ClaudeWeekly);
-                RenderBucket("  claude 5h", snap.Claude5h);
+            foreach (var p in _providers) {
+                if (!p.Enabled) continue;
+                if (opt.Provider != null && !string.Equals(opt.Provider, p.Id, StringComparison.OrdinalIgnoreCase)) continue;
+                var st = FindState(snap, p.Id);
+                if (st == null) continue;
+
+                if (p.Type == "agy") {
+                    RenderProviderHeader(p.Title, st.Status, st.LastUpdated);
+                    RenderBucket("  gemini 7d", snap.GeminiWeekly);
+                    RenderBucket("  gemini 5h", snap.Gemini5h);
+                    RenderBucket("  claude 7d", snap.ClaudeWeekly);
+                    RenderBucket("  claude 5h", snap.Claude5h);
+                } else if (p.Type == "openrouter" && st.OpenRouter != null) {
+                    var or = st.OpenRouter;
+                    RenderProviderHeader(p.Title, st.Status, st.LastUpdated);
+                    string pct = or.UsedPercent.ToString("0.#", CultureInfo.InvariantCulture) + "% used"
+                        + (or.Limit > 0 ? "" : " (no limit)");
+                    Console.WriteLine("       " + pct
+                        + "  reset " + Safe(or.ResetIn)
+                        + "  free " + or.FreeDailyUsed + "/" + or.FreeDailyLimit
+                        + "  rem. $" + or.LimitRemaining.ToString("0.00", CultureInfo.InvariantCulture));
+                } else if (st.Kimi != null) {
+                    RenderProviderHeader(p.Title, st.Status, st.LastUpdated);
+                    RenderBucket("  7d", st.Kimi.Limit7d);
+                    RenderBucket("  5h", st.Kimi.Limit5h);
+                }
             }
         }
 
@@ -350,41 +373,46 @@ namespace LlmLimitsCli {
         // JSON payload (no keys, no raw OpenRouter label)
         // ------------------------------------------------------------------
         static Dictionary<string, object> BuildJsonPayload(CliOptions opt, QuotaSnapshot snap) {
-            var providers = new Dictionary<string, object>();
+            var providers = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
-            if (opt.Provider == null || opt.Provider == "kimi") {
-                providers["kimi"] = new Dictionary<string, object> {
-                    { "status", snap.Kimi.Status },
-                    { "last_updated", snap.Kimi.LastUpdated },
-                    { "limit_5h", BucketJson(snap.Kimi.Limit5h) },
-                    { "limit_7d", BucketJson(snap.Kimi.Limit7d) }
-                };
-            }
-            if (opt.Provider == null || opt.Provider == "openrouter") {
-                var or = snap.OpenRouter;
-                providers["openrouter"] = new Dictionary<string, object> {
-                    { "status", or.Status },
-                    { "last_updated", or.LastUpdated },
-                    { "limit", or.Limit },
-                    { "usage", or.Usage },
-                    { "limit_remaining", or.LimitRemaining },
-                    { "used_percent", or.UsedPercent },
-                    { "used_fraction", or.UsedFraction },
-                    { "reset_in", or.ResetIn },
-                    { "free_daily_used", or.FreeDailyUsed },
-                    { "free_daily_limit", or.FreeDailyLimit }
-                    // NOTE: no "label" — never leak the key
-                };
-            }
-            if (opt.Provider == null || opt.Provider == "agy") {
-                providers["agy"] = new Dictionary<string, object> {
-                    { "status", snap.AgyStatus },
-                    { "last_updated", snap.AgyLastUpdated },
-                    { "gemini_5h", BucketJson(snap.Gemini5h) },
-                    { "gemini_weekly", BucketJson(snap.GeminiWeekly) },
-                    { "claude_5h", BucketJson(snap.Claude5h) },
-                    { "claude_weekly", BucketJson(snap.ClaudeWeekly) }
-                };
+            foreach (var p in _providers) {
+                if (!p.Enabled) continue;
+                if (opt.Provider != null && !string.Equals(opt.Provider, p.Id, StringComparison.OrdinalIgnoreCase)) continue;
+                var st = FindState(snap, p.Id);
+                if (st == null) continue;
+
+                if (p.Type == "agy") {
+                    providers[p.Id] = new Dictionary<string, object> {
+                        { "status", st.Status },
+                        { "last_updated", st.LastUpdated },
+                        { "gemini_5h", BucketJson(snap.Gemini5h) },
+                        { "gemini_weekly", BucketJson(snap.GeminiWeekly) },
+                        { "claude_5h", BucketJson(snap.Claude5h) },
+                        { "claude_weekly", BucketJson(snap.ClaudeWeekly) }
+                    };
+                } else if (p.Type == "openrouter" && st.OpenRouter != null) {
+                    var or = st.OpenRouter;
+                    providers[p.Id] = new Dictionary<string, object> {
+                        { "status", st.Status },
+                        { "last_updated", st.LastUpdated },
+                        { "limit", or.Limit },
+                        { "usage", or.Usage },
+                        { "limit_remaining", or.LimitRemaining },
+                        { "used_percent", or.UsedPercent },
+                        { "used_fraction", or.UsedFraction },
+                        { "reset_in", or.ResetIn },
+                        { "free_daily_used", or.FreeDailyUsed },
+                        { "free_daily_limit", or.FreeDailyLimit }
+                        // NOTE: no "label" — never leak the key
+                    };
+                } else if (st.Kimi != null) {
+                    providers[p.Id] = new Dictionary<string, object> {
+                        { "status", st.Status },
+                        { "last_updated", st.LastUpdated },
+                        { "limit_5h", BucketJson(st.Kimi.Limit5h) },
+                        { "limit_7d", BucketJson(st.Kimi.Limit7d) }
+                    };
+                }
             }
 
             return new Dictionary<string, object> {
@@ -407,22 +435,22 @@ namespace LlmLimitsCli {
         // Exit codes
         // ------------------------------------------------------------------
         static int ExitCodeFor(CliOptions opt, QuotaSnapshot snap) {
-            string kimiStatus = (snap.Kimi.Status ?? "").ToLowerInvariant();
-            string orStatus = (snap.OpenRouter.Status ?? "").ToLowerInvariant();
-            string agyStatus = (snap.AgyStatus ?? "").ToLowerInvariant();
-            string rootStatus = (snap.Status ?? "").ToLowerInvariant();
+            if (!string.IsNullOrEmpty(opt.Provider)) {
+                var st = FindState(snap, opt.Provider);
+                return CodeFor(st != null ? (st.Status ?? "").ToLowerInvariant() : "error");
+            }
 
-            if (opt.Provider == "kimi") return CodeFor(kimiStatus);
-            if (opt.Provider == "openrouter") return CodeFor(orStatus);
-            if (opt.Provider == "agy") return CodeFor(agyStatus);
-
-            if (rootStatus == "error") return 1;
+            if (((snap.Status ?? "").ToLowerInvariant()) == "error") return 1;
             int online = 0;
             int total = 0;
-            foreach (string st in new string[] { kimiStatus, orStatus, agyStatus }) {
+            foreach (var p in _providers) {
+                if (!p.Enabled) continue;
+                var st = FindState(snap, p.Id);
+                if (st == null) continue;
                 total++;
-                if (st == "online") online++;
+                if ((st.Status ?? "").ToLowerInvariant() == "online") online++;
             }
+            if (total == 0) return 1;
             if (online == total) return 0;
             if (online == 0) return 1;
             return 2;

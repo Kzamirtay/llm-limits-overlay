@@ -56,6 +56,17 @@ namespace LlmLimitsOverlay {
         }
     }
 
+    // Состояние одного провайдера (включая кастомные id из конфига)
+    public class ProviderState {
+        public string Id = "";
+        public string Title = "";
+        public string Kind = "kimi"; // kimi | openrouter | agy
+        public string Status = "online";
+        public string LastUpdated = "";
+        public KimiInfo Kimi = null;
+        public OpenRouterInfo OpenRouter = null;
+    }
+
     public class QuotaSnapshot {
         public string Status { get; set; }
         public string LastUpdated { get; set; }
@@ -67,6 +78,8 @@ namespace LlmLimitsOverlay {
         public BucketInfo ClaudeWeekly { get; set; }
         public OpenRouterInfo OpenRouter { get; set; }
         public KimiInfo Kimi { get; set; }
+        // Все провайдеры (включая кастомные id); Kimi/OpenRouter/AgyStatus — легаси-зеркала
+        public List<ProviderState> Providers { get; set; }
 
         public QuotaSnapshot() {
             Status = "online";
@@ -79,6 +92,7 @@ namespace LlmLimitsOverlay {
             ClaudeWeekly = new BucketInfo();
             OpenRouter = new OpenRouterInfo();
             Kimi = new KimiInfo();
+            Providers = new List<ProviderState>();
         }
 
         public static BucketInfo ParseBucket(Dictionary<string, object> bucket) {
@@ -175,9 +189,74 @@ namespace LlmLimitsOverlay {
             if (agyMeta != null) {
                 snap.AgyStatus = SimpleJson.GetString(agyMeta, "status", "online");
                 snap.AgyLastUpdated = SimpleJson.GetString(agyMeta, "last_updated", snap.LastUpdated);
+                snap.Providers.Add(new ProviderState {
+                    Id = "agy", Kind = "agy",
+                    Status = snap.AgyStatus, LastUpdated = snap.AgyLastUpdated
+                });
             } else {
                 snap.AgyStatus = snap.Status;
                 snap.AgyLastUpdated = snap.LastUpdated;
+            }
+
+            // OpenRouter legacy mirror -> ProviderState
+            snap.Providers.Add(new ProviderState {
+                Id = "openrouter", Kind = "openrouter",
+                Status = snap.OpenRouter.Status, LastUpdated = snap.OpenRouter.LastUpdated,
+                OpenRouter = snap.OpenRouter
+            });
+            snap.Providers.Add(new ProviderState {
+                Id = "kimi", Kind = "kimi",
+                Status = snap.Kimi.Status, LastUpdated = snap.Kimi.LastUpdated,
+                Kimi = snap.Kimi
+            });
+
+            // Кастомные провайдеры: любые data.<id>, не являющиеся аги/легаси-зеркалами.
+            // Формат определяется по ключам блока: limit_5h -> kimi-окна,
+            // limit/usage -> openrouter-кредиты.
+            var legacy = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            legacy.Add("agy"); legacy.Add("openrouter"); legacy.Add("kimi");
+            foreach (var kv in data) {
+                if (legacy.Contains(kv.Key)) continue;
+                var block = kv.Value as Dictionary<string, object>;
+                if (block == null) continue;
+
+                var ps = new ProviderState { Id = kv.Key };
+                ps.Status = SimpleJson.GetString(block, "status", "online");
+                ps.LastUpdated = SimpleJson.GetString(block, "last_updated", snap.LastUpdated);
+
+                if (block.ContainsKey("limit_5h")) {
+                    ps.Kind = "kimi";
+                    var k = new KimiInfo { Status = ps.Status, LastUpdated = ps.LastUpdated };
+                    var k5 = SimpleJson.GetObject(block, "limit_5h");
+                    if (k5 != null) {
+                        double ratio = SimpleJson.GetDouble(k5, "used_ratio", 0.0);
+                        double pct = SimpleJson.GetDouble(k5, "used_percent", Math.Round(ratio * 100.0, 1));
+                        k.Limit5h = new BucketInfo { Fraction = ratio, Percent = pct, ResetIn = SimpleJson.GetString(k5, "reset_in", "--") };
+                    }
+                    var k7 = SimpleJson.GetObject(block, "limit_7d");
+                    if (k7 != null) {
+                        double ratio = SimpleJson.GetDouble(k7, "used_ratio", 0.0);
+                        double pct = SimpleJson.GetDouble(k7, "used_percent", Math.Round(ratio * 100.0, 1));
+                        k.Limit7d = new BucketInfo { Fraction = ratio, Percent = pct, ResetIn = SimpleJson.GetString(k7, "reset_in", "--") };
+                    }
+                    ps.Kimi = k;
+                } else {
+                    ps.Kind = "openrouter";
+                    var or = new OpenRouterInfo { Status = ps.Status, LastUpdated = ps.LastUpdated };
+                    or.Limit = SimpleJson.GetDouble(block, "limit", 0.0);
+                    or.Usage = SimpleJson.GetDouble(block, "usage", 0.0);
+                    or.LimitRemaining = block.ContainsKey("limit_remaining")
+                        ? SimpleJson.GetDouble(block, "limit_remaining", Math.Max(0.0, or.Limit - or.Usage))
+                        : Math.Max(0.0, or.Limit - or.Usage);
+                    or.UsedFraction = SimpleJson.GetDouble(block, "used_fraction", or.Limit > 0 ? or.Usage / or.Limit : 0.0);
+                    or.UsedPercent = SimpleJson.GetDouble(block, "used_percent", Math.Round(or.UsedFraction * 100.0, 1));
+                    or.ResetIn = SimpleJson.GetString(block, "reset_in", "--");
+                    or.LimitReset = SimpleJson.GetString(block, "limit_reset", "monthly");
+                    or.FreeDailyLimit = SimpleJson.GetInt(block, "free_daily_limit", 0);
+                    or.FreeDailyUsed = SimpleJson.GetInt(block, "free_daily_used", 0);
+                    ps.OpenRouter = or;
+                }
+                snap.Providers.Add(ps);
             }
 
             return snap;

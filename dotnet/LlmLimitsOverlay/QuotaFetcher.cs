@@ -58,8 +58,14 @@ namespace LlmLimitsOverlay {
         private bool _isFetching = false;
 
         // Одноразовое логирование плейсхолдер-ключей (чтобы не спамить каждый цикл)
-        private static bool _loggedNoKeyOpenRouter = false;
-        private static bool _loggedNoKeyKimi = false;
+        private static readonly Dictionary<string, bool> _loggedNoKey = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        private static void LogNoKeyOnce(string id) {
+            bool logged;
+            if (_loggedNoKey.TryGetValue(id, out logged) && logged) return;
+            _loggedNoKey[id] = true;
+            Logger.Log("[" + id + "] ключ не задан (placeholder) — HTTP пропущен");
+        }
 
         public bool IsFetching {
             get { return _isFetching; }
@@ -170,57 +176,72 @@ namespace LlmLimitsOverlay {
 
                 Logger.Log(string.Format("Starting async native refresh at {0}...", nowIso));
 
-                var taskAgy = Task.Run(() => FetchWorkerAgy(limitsPaths, nowIso, envParser, cancelToken));
-                var taskOr = Task.Run(() => FetchWorkerOpenRouter(limitsPaths, nowIso, envParser, cancelToken));
-                var taskKimi = Task.Run(() => FetchWorkerKimi(limitsPaths, nowIso, envParser, cancelToken));
+                var providers = (config != null ? config.GetEffectiveProviders() : ProviderConfig.GetDefaults());
+                var tasks = new List<Task<Dictionary<string, object>>>();
+                var taskMeta = new List<ProviderConfig>();
+                Task<AgyWorkerResult> taskAgy = null;
+                ProviderConfig agyProvider = null;
+
+                foreach (var p in providers) {
+                    if (!p.Enabled) continue;
+                    if (p.Type == "agy") {
+                        if (taskAgy == null) {
+                            agyProvider = p;
+                            taskAgy = Task.Run(() => FetchWorkerAgy(limitsPaths, nowIso, envParser, cancelToken));
+                        }
+                        continue;
+                    }
+                    var pc = p;
+                    tasks.Add(Task.Run(() => FetchWorkerProvider(pc, limitsPaths, nowIso, envParser, cancelToken)));
+                    taskMeta.Add(pc);
+                }
 
                 int budgetMs = (config != null && config.TimeoutSeconds > 0)
                     ? (int)(config.TimeoutSeconds * 1000)
                     : 10000;
 
-                // Use Task (non-generic) array so all 3 different Task<T> types can be combined
-                Task[] allTasksArr = new Task[] { taskAgy, taskOr, taskKimi };
-                Task allTasks = Task.WhenAll(allTasksArr);
+                var allList = new List<Task>();
+                if (taskAgy != null) allList.Add(taskAgy);
+                allList.AddRange(tasks);
+                Task allTasks = Task.WhenAll(allList.ToArray());
                 Task delayTask = Task.Delay(budgetMs);
 
                 await Task.WhenAny(allTasks, delayTask);
 
                 AgyWorkerResult agyRes = null;
-                Dictionary<string, object> orRes = null;
-                Dictionary<string, object> kimiRes = null;
-
-                if (taskAgy.IsCompleted && !taskAgy.IsFaulted) {
-                    agyRes = taskAgy.Result;
-                } else {
-                    Logger.Log("Agy fetch incomplete or timed out; falling back to cache.");
-                    agyRes = FallbackAgy(limitsPaths, nowIso, "timeout after 8s");
+                if (taskAgy != null) {
+                    if (taskAgy.IsCompleted && !taskAgy.IsFaulted) {
+                        agyRes = taskAgy.Result;
+                    } else {
+                        Logger.Log("Agy fetch incomplete or timed out; falling back to cache.");
+                        agyRes = FallbackAgy(limitsPaths, nowIso, "timeout after " + _agyTimeoutSeconds + "s");
+                    }
                 }
 
-                if (taskOr.IsCompleted && !taskOr.IsFaulted) {
-                    orRes = taskOr.Result;
-                } else {
-                    Logger.Log("OpenRouter fetch incomplete or timed out; falling back to cache.");
-                    orRes = FallbackOpenRouter(limitsPaths, nowIso, "timeout");
+                var providerRes = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < tasks.Count; i++) {
+                    var t = tasks[i];
+                    var pc = taskMeta[i];
+                    if (t.IsCompleted && !t.IsFaulted && t.Result != null) {
+                        providerRes[pc.Id] = t.Result;
+                    } else {
+                        Logger.Log(string.Format("[{0}] fetch incomplete or timed out; falling back to cache.", pc.Id));
+                        providerRes[pc.Id] = FallbackProvider(pc, limitsPaths, nowIso, "timeout");
+                    }
                 }
 
-                if (taskKimi.IsCompleted && !taskKimi.IsFaulted) {
-                    kimiRes = taskKimi.Result;
-                } else {
-                    Logger.Log("Kimi fetch incomplete or timed out; falling back to cache.");
-                    kimiRes = FallbackKimi(limitsPaths, nowIso, "timeout");
-                }
-
-                var mergedPayload = AssembleAndSaveLimits(limitsPaths, nowIso, agyRes, orRes, kimiRes);
+                var mergedPayload = AssembleAndSaveLimits(limitsPaths, nowIso, agyRes, providerRes);
                 var snap = QuotaSnapshot.FromDictionary(mergedPayload, null);
 
                 InvokeOnUI(() => {
                     if (_onDataLoaded != null) _onDataLoaded(snap);
                 });
 
-                Logger.Log(string.Format("Native refresh finished (agy: {0}, openrouter: {1}, kimi: {2} -> root: {3}).",
-                    agyRes.Status,
-                    SimpleJson.GetString(orRes, "status", "unknown"),
-                    SimpleJson.GetString(kimiRes, "status", "unknown"),
+                var statusParts = new List<string>();
+                if (agyRes != null) statusParts.Add("agy: " + agyRes.Status);
+                foreach (var kv in providerRes) statusParts.Add(kv.Key + ": " + SimpleJson.GetString(kv.Value, "status", "unknown"));
+                Logger.Log(string.Format("Native refresh finished ({0} -> root: {1}).",
+                    string.Join(", ", statusParts.ToArray()),
                     SimpleJson.GetString(mergedPayload, "status", "unknown")));
             } catch (Exception ex) {
                 Logger.Log("Exception during async native refresh: " + ex.Message);
@@ -449,25 +470,37 @@ namespace LlmLimitsOverlay {
             return null;
         }
 
+        // Диспетчеризация провайдера по типу/baseUrl.
+        private Dictionary<string, object> FetchWorkerProvider(ProviderConfig pc, string[] limitsPaths, string nowIso, EnvParser env, CancellationToken token) {
+            string key = pc.ResolveApiKey(env);
+            if (pc.Type == "openrouter") {
+                return FetchWorkerOpenRouter(pc, key, limitsPaths, nowIso, token);
+            }
+            return FetchWorkerKimi(pc, key, limitsPaths, nowIso, token);
+        }
+
+        private Dictionary<string, object> FallbackProvider(ProviderConfig pc, string[] limitsPaths, string nowIso, string errMsg) {
+            if (pc.Type == "openrouter") return FallbackOpenRouter(pc.Id, limitsPaths, nowIso, errMsg);
+            return FallbackKimi(pc.Id, limitsPaths, nowIso, errMsg);
+        }
+
         // ---------------------------------------------------------------------
-        // Provider: OpenRouter
+        // Provider: OpenRouter (кредиты + free-пул)
         // ---------------------------------------------------------------------
-        private Dictionary<string, object> FetchWorkerOpenRouter(string[] limitsPaths, string nowIso, EnvParser env, CancellationToken token) {
-            string key = env.Get("OPENROUTER_API_KEY");
+        private Dictionary<string, object> FetchWorkerOpenRouter(ProviderConfig pc, string key, string[] limitsPaths, string nowIso, CancellationToken token) {
+            string id = pc.Id;
             if (string.IsNullOrEmpty(key) || EnvParser.IsPlaceholderKey(key)) {
-                if (!_loggedNoKeyOpenRouter) {
-                    Logger.Log("[openrouter] ключ не задан (placeholder) — HTTP пропущен");
-                    _loggedNoKeyOpenRouter = true;
-                }
-                var def = CreateDefaultOpenRouter("no_key", "OPENROUTER_API_KEY не задана или является плейсхолдером");
-                SaveProviderFragment("openrouter", WrapFragment(def, nowIso), limitsPaths);
-                return def;
+                LogNoKeyOnce(id);
+                var defNoKey = CreateDefaultOpenRouter("no_key", "API-ключ не задан или является плейсхолдером");
+                SaveProviderFragment(id, WrapFragment(defNoKey, nowIso), limitsPaths);
+                return defNoKey;
             }
 
             try {
-                if (token.IsCancellationRequested) return FallbackOpenRouter(limitsPaths, nowIso, "canceled");
+                if (token.IsCancellationRequested) return FallbackOpenRouter(id, limitsPaths, nowIso, "canceled");
 
-                var req = (HttpWebRequest)WebRequest.Create("https://openrouter.ai/api/v1/key");
+                string baseUrl = !string.IsNullOrEmpty(pc.BaseUrl) ? pc.BaseUrl : "https://openrouter.ai/api/v1";
+                var req = (HttpWebRequest)WebRequest.Create(baseUrl.TrimEnd('/') + "/key");
                 req.Method = "GET";
                 req.UserAgent = "LLM-Limits-Overlay/1.0";
                 req.Headers.Add("Authorization", "Bearer " + key);
@@ -532,17 +565,17 @@ namespace LlmLimitsOverlay {
                     res["free_daily_limit"] = freeLimit;
                     res["label"] = MaskOpenRouterLabel(SimpleJson.GetString(data, "label", ""));
 
-                    SaveProviderFragment("openrouter", WrapFragment(res, nowIso), limitsPaths);
+                    SaveProviderFragment(id, WrapFragment(res, nowIso), limitsPaths);
                     return res;
                 }
             } catch (Exception ex) {
-                Logger.Log("[openrouter] Request error: " + ex.Message);
-                return FallbackOpenRouter(limitsPaths, nowIso, ex.Message);
+                Logger.Log("[" + id + "] Request error: " + ex.Message);
+                return FallbackOpenRouter(id, limitsPaths, nowIso, ex.Message);
             }
         }
 
-        private Dictionary<string, object> FallbackOpenRouter(string[] limitsPaths, string nowIso, string errMsg) {
-            var prev = LoadCachedProvider("openrouter", limitsPaths);
+        private Dictionary<string, object> FallbackOpenRouter(string id, string[] limitsPaths, string nowIso, string errMsg) {
+            var prev = LoadCachedProvider(id, limitsPaths);
             Dictionary<string, object> res;
             if (prev != null && (SimpleJson.GetString(prev, "status", "") == "online" || SimpleJson.GetString(prev, "status", "") == "stale")) {
                 res = new Dictionary<string, object>(prev, StringComparer.OrdinalIgnoreCase);
@@ -552,29 +585,27 @@ namespace LlmLimitsOverlay {
                 res = CreateDefaultOpenRouter("error", errMsg);
             }
 
-            SaveProviderFragment("openrouter", WrapFragment(res, nowIso), limitsPaths);
+            SaveProviderFragment(id, WrapFragment(res, nowIso), limitsPaths);
             return res;
         }
 
         // ---------------------------------------------------------------------
-        // Provider: Kimi
+        // Provider: Kimi (api.kimi.com — окна 5ч/7д из {baseUrl}/usages)
         // ---------------------------------------------------------------------
-        private Dictionary<string, object> FetchWorkerKimi(string[] limitsPaths, string nowIso, EnvParser env, CancellationToken token) {
-            string key = env.Get("KIMI_API_KEY");
+        private Dictionary<string, object> FetchWorkerKimi(ProviderConfig pc, string key, string[] limitsPaths, string nowIso, CancellationToken token) {
+            string id = pc.Id;
             if (string.IsNullOrEmpty(key) || EnvParser.IsPlaceholderKey(key)) {
-                if (!_loggedNoKeyKimi) {
-                    Logger.Log("[kimi] ключ не задан (placeholder) — HTTP пропущен");
-                    _loggedNoKeyKimi = true;
-                }
-                var def = CreateDefaultKimi("no_key", "KIMI_API_KEY не задана или является плейсхолдером");
-                SaveProviderFragment("kimi", WrapFragment(def, nowIso), limitsPaths);
+                LogNoKeyOnce(id);
+                var def = CreateDefaultKimi("no_key", "API-ключ не задан или является плейсхолдером");
+                SaveProviderFragment(id, WrapFragment(def, nowIso), limitsPaths);
                 return def;
             }
 
             try {
-                if (token.IsCancellationRequested) return FallbackKimi(limitsPaths, nowIso, "canceled");
+                if (token.IsCancellationRequested) return FallbackKimi(id, limitsPaths, nowIso, "canceled");
 
-                var req = (HttpWebRequest)WebRequest.Create("https://api.kimi.com/coding/v1/usages");
+                string baseUrl = !string.IsNullOrEmpty(pc.BaseUrl) ? pc.BaseUrl : "https://api.kimi.com/coding/v1";
+                var req = (HttpWebRequest)WebRequest.Create(baseUrl.TrimEnd('/') + "/usages");
                 req.Method = "GET";
                 req.UserAgent = "LLM-Limits-Overlay/1.0";
                 req.Headers.Add("Authorization", "Bearer " + key);
@@ -659,17 +690,17 @@ namespace LlmLimitsOverlay {
                     l7Dict["level"] = GetUsedStatusLevel(frac7d);
                     res["limit_7d"] = l7Dict;
 
-                    SaveProviderFragment("kimi", WrapFragment(res, nowIso), limitsPaths);
+                    SaveProviderFragment(id, WrapFragment(res, nowIso), limitsPaths);
                     return res;
                 }
             } catch (Exception ex) {
-                Logger.Log("[kimi] Request error: " + ex.Message);
-                return FallbackKimi(limitsPaths, nowIso, ex.Message);
+                Logger.Log("[" + id + "] Request error: " + ex.Message);
+                return FallbackKimi(id, limitsPaths, nowIso, ex.Message);
             }
         }
 
-        private Dictionary<string, object> FallbackKimi(string[] limitsPaths, string nowIso, string errMsg) {
-            var prev = LoadCachedProvider("kimi", limitsPaths);
+        private Dictionary<string, object> FallbackKimi(string id, string[] limitsPaths, string nowIso, string errMsg) {
+            var prev = LoadCachedProvider(id, limitsPaths);
             Dictionary<string, object> res;
             if (prev != null && (SimpleJson.GetString(prev, "status", "") == "online" || SimpleJson.GetString(prev, "status", "") == "stale")) {
                 res = new Dictionary<string, object>(prev, StringComparer.OrdinalIgnoreCase);
@@ -679,7 +710,7 @@ namespace LlmLimitsOverlay {
                 res = CreateDefaultKimi("error", errMsg);
             }
 
-            SaveProviderFragment("kimi", WrapFragment(res, nowIso), limitsPaths);
+            SaveProviderFragment(id, WrapFragment(res, nowIso), limitsPaths);
             return res;
         }
 
@@ -699,45 +730,42 @@ namespace LlmLimitsOverlay {
             return frag;
         }
 
-        private Dictionary<string, object> AssembleAndSaveLimits(string[] limitsPaths, string nowIso, AgyWorkerResult agyRes, Dictionary<string, object> orRes, Dictionary<string, object> kimiRes) {
-            string agyStatus = agyRes != null ? agyRes.Status : "unknown";
-            string orStatus = orRes != null ? SimpleJson.GetString(orRes, "status", "unknown") : "unknown";
-            string kimiStatus = kimiRes != null ? SimpleJson.GetString(kimiRes, "status", "unknown") : "unknown";
+        private Dictionary<string, object> AssembleAndSaveLimits(string[] limitsPaths, string nowIso, AgyWorkerResult agyRes, Dictionary<string, Dictionary<string, object>> providerRes) {
+            var allStatuses = new List<string>();
+            if (agyRes != null) allStatuses.Add(agyRes.Status);
+            foreach (var kv in providerRes) allStatuses.Add(SimpleJson.GetString(kv.Value, "status", "unknown"));
 
-            string rootStatus;
-            var statuses = new string[] { agyStatus, orStatus, kimiStatus };
             // online, если хотя бы один провайдер online; иначе error
-            if (Array.IndexOf(statuses, "online") != -1) {
-                rootStatus = "online";
-            } else {
-                rootStatus = "error";
+            string rootStatus = allStatuses.Contains("online") ? "online" : "error";
+
+            var mergedData = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+            if (agyRes != null) {
+                var agyBuckets = (agyRes.Buckets != null) ? agyRes.Buckets : GetDefaultAgyBuckets("unknown");
+                var agyInfo = new Dictionary<string, object>();
+                agyInfo["status"] = agyRes.Status;
+                agyInfo["last_updated"] = !string.IsNullOrEmpty(agyRes.LastUpdated) ? agyRes.LastUpdated : nowIso;
+                agyInfo["gemini_5h"] = agyBuckets.ContainsKey("gemini_5h") ? agyBuckets["gemini_5h"] : null;
+                agyInfo["gemini_weekly"] = agyBuckets.ContainsKey("gemini_weekly") ? agyBuckets["gemini_weekly"] : null;
+                agyInfo["claude_5h"] = agyBuckets.ContainsKey("claude_5h") ? agyBuckets["claude_5h"] : null;
+                agyInfo["claude_weekly"] = agyBuckets.ContainsKey("claude_weekly") ? agyBuckets["claude_weekly"] : null;
+                mergedData["agy"] = agyInfo;
             }
 
-            var agyBuckets = (agyRes != null && agyRes.Buckets != null)
-                ? agyRes.Buckets
-                : GetDefaultAgyBuckets("unknown");
+            foreach (var kv in providerRes) {
+                mergedData[kv.Key] = kv.Value;
+            }
 
-            var agyInfo = new Dictionary<string, object>();
-            agyInfo["status"] = agyStatus;
-            agyInfo["last_updated"] = (agyRes != null && !string.IsNullOrEmpty(agyRes.LastUpdated)) ? agyRes.LastUpdated : nowIso;
-            agyInfo["gemini_5h"] = agyBuckets.ContainsKey("gemini_5h") ? agyBuckets["gemini_5h"] : null;
-            agyInfo["gemini_weekly"] = agyBuckets.ContainsKey("gemini_weekly") ? agyBuckets["gemini_weekly"] : null;
-            agyInfo["claude_5h"] = agyBuckets.ContainsKey("claude_5h") ? agyBuckets["claude_5h"] : null;
-            agyInfo["claude_weekly"] = agyBuckets.ContainsKey("claude_weekly") ? agyBuckets["claude_weekly"] : null;
-
-            var mergedData = new Dictionary<string, object>();
-            mergedData["agy"] = agyInfo;
-            mergedData["openrouter"] = orRes;
-            mergedData["kimi"] = kimiRes;
-
-            var payload = new Dictionary<string, object>();
+            var payload = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             payload["status"] = rootStatus;
             payload["last_updated"] = nowIso;
             payload["ls_address"] = null;
             payload["data"] = mergedData;
             payload["raw"] = agyRes != null ? agyRes.Raw : null;
-            payload["openrouter"] = orRes;
-            payload["kimi"] = kimiRes;
+            // Обратная совместимость: прежние корневые зеркала для стандартных id
+            Dictionary<string, object> mirror;
+            if (providerRes.TryGetValue("openrouter", out mirror)) payload["openrouter"] = mirror;
+            if (providerRes.TryGetValue("kimi", out mirror)) payload["kimi"] = mirror;
             if (agyRes != null && agyRes.CacheHit) {
                 payload["cache_hit"] = true;
             }
@@ -834,6 +862,12 @@ namespace LlmLimitsOverlay {
                 return null;
             }
 
+            // Произвольный id: блок вложен в data.<id>, затем эвристика по ключам
+            var dd = SimpleJson.GetObject(payload, "data");
+            if (dd != null && dd.ContainsKey(provider)) return SimpleJson.GetObject(dd, provider);
+            if (dd != null && (dd.ContainsKey("limit_5h") || dd.ContainsKey("latency_ms") || dd.ContainsKey("limit") || dd.ContainsKey("usage"))) return dd;
+            if (payload.ContainsKey(provider)) return SimpleJson.GetObject(payload, provider);
+            if (payload.ContainsKey("limit_5h") || payload.ContainsKey("latency_ms") || payload.ContainsKey("limit") || payload.ContainsKey("usage")) return payload;
             return null;
         }
 
@@ -1209,5 +1243,6 @@ namespace LlmLimitsOverlay {
 
             return d;
         }
+
     }
 }
