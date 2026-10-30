@@ -374,6 +374,19 @@ llm-limits --watch 30
                           #   -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=true -o dist/linux
   ```
 
+#### 6. Go CLI (экспериментально)
+Чистый Go-порт того же движка фетча + CLI лежит в `go/` (без cgo; собирается и под Linux, и под Windows из одних исходников). Повторяет C#-CLI: те же флаги, та же схема `limits.json`, те же коды выхода.
+
+```bash
+cd go
+go build -o dist/llm-limits ./cmd/llm-limits                 # Linux
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/llm-limits
+```
+
+- Статический бинарник ~**11 МБ**, рантайм не нужен (против ~16 МБ .NET trimmed / ~67 МБ untrimmed).
+- Ключи/конфиг/кэш взаимозаменяемы с C#-версией (тот же `overlay.config.json`, `.env`, кэш agy /usage, `limits.json`).
+- WPF GUI по-прежнему на C#; Go пока покрывает фетч + CLI.
+
 ---
 
 ## Диагностика и логи

@@ -36,3 +36,6 @@ dist/
 *~
 Thumbs.db
 Desktop.ini
+
+# Go CLI build output
+go/dist/

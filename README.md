@@ -376,6 +376,19 @@ llm-limits --watch 30
                           #   -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=true -o dist/linux
   ```
 
+#### 6. Go CLI (experimental)
+A pure-Go port of the same fetch engine + CLI lives in `go/` (no cgo; builds for Linux and Windows from one source). It mirrors the C# CLI: same flags, same `limits.json` schema, same exit codes.
+
+```bash
+cd go
+go build -o dist/llm-limits ./cmd/llm-limits                 # Linux
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/llm-limits
+```
+
+- ~**11 MB** static binary, no runtime needed (vs ~16 MB .NET trimmed / ~67 MB untrimmed).
+- Keys/config/cache formats are interchangeable with the C# version (same `overlay.config.json`, `.env`, agy /usage cache, `limits.json`).
+- The WPF GUI still uses the C# implementation; Go currently covers fetch + CLI only.
+
 ---
 
 ## Diagnostics & Logs
