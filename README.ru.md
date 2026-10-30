@@ -387,6 +387,29 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/ll
 - Ключи/конфиг/кэш взаимозаменяемы с C#-версией (тот же `overlay.config.json`, `.env`, кэш agy /usage, `limits.json`).
 - WPF GUI по-прежнему на C#; Go пока покрывает фетч + CLI.
 
+#### 7. Go GUI (PoC)
+Proof-of-concept HUD-оверлея на [Wails v2](https://wails.io/) (Go + WebKit/WebView2) находится в `go/cmd/overlay/`. Реализован как база для миграции GUI с C#/WPF на Go.
+
+- **Стек**: Go 1.27, Wails v2 (`github.com/wailsapp/wails/v2`), статический HTML/CSS без npm/node (`frontend/dist/`), `fyne.io/systray` для трея, Win32 API (`RegisterHotKey`, `SetWindowLongPtr`).
+- **Проверенные возможности PoC**:
+  - **Прозрачность и визуал**: Frameless-окно (`WindowIsTranslucent`, `WebviewIsTransparent`) с плавающими полупрозрачными тёмными карточками (`rgba(30, 41, 59, 0.70)`), блюром фона и тонкими индикаторами для KIMI, OPENROUTER и GEMINI + CLAUDE/GPT.
+  - **Always-on-Top**: Закрепление поверх всех окон (`AlwaysOnTop = true`).
+  - **Клики насквозь (Click-Through)**: Глобальный хоткей `Ctrl+Alt+L` переключает стили `WS_EX_TRANSPARENT | WS_EX_LAYERED`, позволяя кликам проходить сквозь оверлей.
+  - **Трей и контекстное меню**: Нативная иконка в трее с пунктами меню (*Скрыть/Показать*, *Обновить*, *Клики насквозь*, *Сбросить позицию*, *Выход*).
+  - **Перетаскивание**: Нативный drag за карточки через `--wails-draggable: drag` в интерактивном режиме.
+- **Сборка**:
+  ```bash
+  # Windows (кросс-компиляция из Linux через MinGW)
+  cd go/cmd/overlay
+  CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 ~/go/bin/wails build -platform windows/amd64 -skipbindings
+
+  # Linux (нативная сборка)
+  cd go/cmd/overlay
+  ~/go/bin/wails build -skipbindings
+  ```
+- **Бинарники**: В `go/dist/` (Windows `.exe`: ~12 МБ, Linux: ~9.1 МБ).
+- **Проверка на Windows**: Автоматизированный скрипт `powershell.exe -ExecutionPolicy Bypass -File go/verify-overlay.ps1` проверяет frameless-стили, always-on-top, переключение хоткея, наличие трея и прозрачность (различие MD5-хэшей скриншотов на белой и чёрной подложках).
+
 ---
 
 ## Диагностика и логи

@@ -389,6 +389,29 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/ll
 - Keys/config/cache formats are interchangeable with the C# version (same `overlay.config.json`, `.env`, agy /usage cache, `limits.json`).
 - The WPF GUI still uses the C# implementation; Go currently covers fetch + CLI only.
 
+#### 7. Go GUI (PoC)
+A proof-of-concept HUD overlay based on [Wails v2](https://wails.io/) (Go + WebKit/WebView2) lives in `go/cmd/overlay/`. It serves as the foundation for the cross-platform migration of the GUI from C#/WPF to Go.
+
+- **Stack**: Go 1.27, Wails v2 (`github.com/wailsapp/wails/v2`), static HTML/CSS without npm/node dependencies (`frontend/dist/`), `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `SetWindowLongPtr`).
+- **Features verified in PoC**:
+  - **Translucency & Alpha**: Borderless frameless window (`WindowIsTranslucent`, `WebviewIsTransparent`) with floating dark translucent cards (`rgba(30, 41, 59, 0.70)`), background blur, and fine progress indicators for KIMI, OPENROUTER, and GEMINI + CLAUDE/GPT.
+  - **Always-on-Top**: Floats above all desktop windows (`AlwaysOnTop = true`).
+  - **Click-Through Mode**: Global hotkey `Ctrl+Alt+L` toggles `WS_EX_TRANSPARENT | WS_EX_LAYERED` styles so clicks pass through seamlessly when enabled.
+  - **System Tray & Menu**: Native tray icon with menu items (*Показать/Скрыть*, *Обновить*, *Клики насквозь*, *Сбросить позицию*, *Выход*).
+  - **Dragging**: Smooth drag-to-reposition via `--wails-draggable: drag` when click-through is inactive.
+- **Build**:
+  ```bash
+  # Windows (cross-compile from Linux via MinGW)
+  cd go/cmd/overlay
+  CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 ~/go/bin/wails build -platform windows/amd64 -skipbindings
+
+  # Linux (native)
+  cd go/cmd/overlay
+  ~/go/bin/wails build -skipbindings
+  ```
+- **Binaries**: Output in `go/dist/` (Windows `.exe`: ~12 MB, Linux: ~9.1 MB).
+- **Verification on Windows**: Automated test via `powershell.exe -ExecutionPolicy Bypass -File go/verify-overlay.ps1` verifies window styles, tray presence, hotkey toggling, and background translucency (MD5 checksum divergence on white vs black backdrops).
+
 ---
 
 ## Diagnostics & Logs

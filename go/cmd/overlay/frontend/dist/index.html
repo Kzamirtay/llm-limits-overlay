@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>LLM Limits Overlay PoC</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow: hidden;
+    width: 290px;
+    --wails-draggable: drag;
+    -webkit-app-region: drag;
+  }
+
+  #root {
+    padding: 6px 6px 12px;
+    width: 290px;
+  }
+
+  .card {
+    background: rgba(30, 41, 59, 0.70);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    --wails-draggable: drag;
+    -webkit-app-region: drag;
+  }
+  .card:last-child { margin-bottom: 0; }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .t-kimi { color: #10b981; }
+  .t-or { color: #a78bfa; }
+  .t-gem { color: #60a5fa; }
+  .t-cla { color: #f59e0b; }
+  .updated {
+    font-size: 10px;
+    color: #94a3b8;
+  }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin: 1px 0 2px;
+  }
+  .meta {
+    font-size: 10px;
+    color: #94a3b8;
+    font-weight: 400;
+  }
+
+  .bar {
+    height: 5.5px;
+    border-radius: 2.5px;
+    background: rgba(148, 163, 184, 0.22);
+    overflow: hidden;
+    margin-bottom: 7px;
+  }
+  .bar > div {
+    height: 100%;
+    border-radius: 2.5px;
+    background: linear-gradient(90deg, #64748b, #cbd5e1);
+  }
+  .bar.last { margin-bottom: 2px; }
+
+  .divider {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.20);
+    margin: 6px 0 7px;
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="card">
+    <div class="header">
+      <span class="title t-kimi">KIMI</span>
+      <span class="updated">только что</span>
+    </div>
+    <div class="row"><span class="meta">3д 12ч</span><span>93.2%</span></div>
+    <div class="bar"><div style="width:93.2%"></div></div>
+    <div class="row"><span class="meta">3ч 52м</span><span>8.6%</span></div>
+    <div class="bar last"><div style="width:8.6%"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="header">
+      <span class="title t-or">OPENROUTER&nbsp;&nbsp;<span class="meta">ост. $7.00</span></span>
+      <span class="updated">только что</span>
+    </div>
+    <div class="row"><span class="meta">2д 16ч</span><span>38.7%</span></div>
+    <div class="bar"><div style="width:38.7%"></div></div>
+    <div class="row"><span class="meta">free: 24/1000</span><span>2.4%</span></div>
+    <div class="bar last"><div style="width:2.4%"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="header">
+      <span class="title t-gem">GEMINI</span>
+      <span class="updated">3 мин</span>
+    </div>
+    <div class="row"><span class="meta">6д 23ч</span><span>4.6%</span></div>
+    <div class="bar"><div style="width:4.6%"></div></div>
+    <div class="row"><span class="meta">4ч 5м</span><span>9.4%</span></div>
+    <div class="bar"><div style="width:9.4%"></div></div>
+    <div class="divider"></div>
+    <div class="header">
+      <span class="title t-cla">CLAUDE/GPT</span>
+    </div>
+    <div class="row"><span class="meta">1д 5ч</span><span>99.3%</span></div>
+    <div class="bar"><div style="width:99.3%"></div></div>
+    <div class="row"><span class="meta">4ч 59м</span><span>0%</span></div>
+    <div class="bar last"><div style="width:0%"></div></div>
+  </div>
+</div>
+</body>
+</html>
