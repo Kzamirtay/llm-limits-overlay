@@ -156,9 +156,15 @@ func bucketFromMap(m map[string]interface{}) model.Bucket {
 	if m == nil {
 		return model.Bucket{ResetIn: "--"}
 	}
+	// kimi-блоки хранят used_ratio (формат файла совместим с C#),
+	// аги-бакеты — used_fraction. Порядок: used_ratio -> used_fraction.
+	frac := getFloat(m, "used_ratio", 0)
+	if !hasNonNull(m, "used_ratio") {
+		frac = getFloat(m, "used_fraction", 0)
+	}
 	return model.Bucket{
 		UsedPercent:  getFloat(m, "used_percent", 0),
-		UsedFraction: getFloat(m, "used_fraction", 0),
+		UsedFraction: frac,
 		ResetIn:      getStr(m, "reset_in"),
 	}
 }
