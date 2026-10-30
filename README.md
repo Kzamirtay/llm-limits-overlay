@@ -369,11 +369,11 @@ llm-limits --watch 30
 - Keys are read from `.env` **next to the binary** (or `--env <path>`).
 - The Gemini/Claude card requires the native Linux `agy` binary: it is resolved from `LLM_LIMITS_AGY_BIN`, then `PATH`, then `~/.local/bin/agy`, `/usr/local/bin/agy`. The OAuth token is read from `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Everything else (Kimi, OpenRouter) works without `agy`.
-- Build from source (requires .NET SDK 8):
+- Release binary `llm-limits-linux-x64` is ~**16 MB** (self-contained .NET 8, **trimmed** single-file publish — `PublishTrimmed=true`; without trimming it would be ~67 MB). Reproducible build:
   ```bash
-  dotnet publish dotnet/LlmLimitsCli.Linux -c Release -r linux-x64 \
-    --self-contained true -p:PublishSingleFile=true \
-    -p:IncludeNativeLibrariesForSelfExtract=true -o dist/linux
+  dotnet/build-linux.sh   # or: dotnet publish dotnet/LlmLimitsCli.Linux -c Release -r linux-x64 \
+                          #   --self-contained true -p:PublishSingleFile=true \
+                          #   -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=true -o dist/linux
   ```
 
 ---

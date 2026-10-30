@@ -367,11 +367,11 @@ llm-limits --watch 30
 - Ключи читаются из `.env` **рядом с бинарником** (либо `--env <путь>`).
 - Карточка Gemini/Claude требует нативный Linux-бинарник `agy`: ищется в `LLM_LIMITS_AGY_BIN`, затем `PATH`, затем `~/.local/bin/agy`, `/usr/local/bin/agy`. OAuth-токен читается из `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Остальное (Kimi, OpenRouter) работает без `agy`.
-- Сборка из исходников (нужен .NET SDK 8):
+- Бинарник релиза `llm-limits-linux-x64` — ~**16 МБ** (self-contained .NET 8, **trimmed**-публикация одним файлом — `PublishTrimmed=true`; без trimming ~67 МБ). Воспроизводимая сборка:
   ```bash
-  dotnet publish dotnet/LlmLimitsCli.Linux -c Release -r linux-x64 \
-    --self-contained true -p:PublishSingleFile=true \
-    -p:IncludeNativeLibrariesForSelfExtract=true -o dist/linux
+  dotnet/build-linux.sh   # или: dotnet publish dotnet/LlmLimitsCli.Linux -c Release -r linux-x64 \
+                          #   --self-contained true -p:PublishSingleFile=true \
+                          #   -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=true -o dist/linux
   ```
 
 ---
