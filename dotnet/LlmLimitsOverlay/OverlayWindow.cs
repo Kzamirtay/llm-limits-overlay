@@ -41,7 +41,7 @@ namespace LlmLimitsOverlay {
             // openrouter
             public Grid RowMain; public TextBlock LblMain; public TextBlock PctMain; public ProgressBar BarMain;
             public Grid RowFree; public TextBlock LblFree; public TextBlock PctFree; public ProgressBar BarFree;
-            public TextBlock TxtBalance;
+            public TextBlock TxtBalanceHeader; // кредит в шапке, за заголовком
         }
 
         private readonly List<ProviderCard> _cards = new List<ProviderCard>();
@@ -225,9 +225,19 @@ namespace LlmLimitsOverlay {
             var color = p.Type == "openrouter" ? OverlayTheme.OpenRouterHeaderColor : OverlayTheme.KimiHeaderColor;
             var title = CreateHeader(p.Title, color, new Thickness(0, 0, 0, 4));
             card.TxtUpdated = CreateUpdatedTextBlock();
-            stack.Children.Add(CreateHeaderRow(title, card.TxtUpdated));
 
             if (p.Type == "openrouter") {
+                // Шапка: [OPENROUTER] [ост. $X] .......... [время]
+                card.TxtBalanceHeader = new TextBlock {
+                    Text = "",
+                    FontSize = OverlayTheme.CardUpdatedFontSize,
+                    FontWeight = FontWeights.Normal,
+                    Foreground = OverlayTheme.MetaTextBrush,
+                    Margin = new Thickness(8, 0, 0, 0),
+                    FontFamily = OverlayTheme.OverlayFontFamily
+                };
+                stack.Children.Add(CreateHeaderRow3(title, card.TxtBalanceHeader, card.TxtUpdated));
+
                 card.RowMain = CreateMetricRow("Месячный лимит", out card.LblMain, out card.PctMain);
                 stack.Children.Add(card.RowMain);
                 card.BarMain = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), "Месячный лимит");
@@ -237,18 +247,9 @@ namespace LlmLimitsOverlay {
                 stack.Children.Add(card.RowFree);
                 card.BarFree = OverlayTheme.CreateProgressBar(5.5, new Thickness(0, 1, 0, 4), OverlayTheme.FreeDailyTooltip);
                 stack.Children.Add(card.BarFree);
-
-                var metaGrid = new Grid { Margin = new Thickness(0, 2, 0, 0) };
-                card.TxtBalance = new TextBlock {
-                    Text = "ост. --",
-                    FontSize = 9,
-                    Foreground = OverlayTheme.MetaTextBrush,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    FontFamily = OverlayTheme.OverlayFontFamily
-                };
-                metaGrid.Children.Add(card.TxtBalance);
-                stack.Children.Add(metaGrid);
             } else {
+                stack.Children.Add(CreateHeaderRow(title, card.TxtUpdated));
+
                 // kimi: окна 7d (сверху) и 5h
                 card.Row7d = CreateMetricRow("Лимит 7d", out card.Lbl7d, out card.Pct7d);
                 stack.Children.Add(card.Row7d);
@@ -348,6 +349,27 @@ namespace LlmLimitsOverlay {
             updated.VerticalAlignment = VerticalAlignment.Bottom;
             updated.HorizontalAlignment = HorizontalAlignment.Right;
             grid.Children.Add(title);
+            grid.Children.Add(updated);
+            return grid;
+        }
+
+        // Шапка openrouter-карточки: [заголовок] [кредит] .......... [время]
+        private static Grid CreateHeaderRow3(TextBlock title, TextBlock balance, TextBlock updated) {
+            var grid = new Grid();
+            grid.Margin = title.Margin;
+            title.Margin = new Thickness(0);
+
+            var left = new StackPanel { Orientation = Orientation.Horizontal };
+            left.VerticalAlignment = VerticalAlignment.Bottom;
+            title.VerticalAlignment = VerticalAlignment.Bottom;
+            balance.VerticalAlignment = VerticalAlignment.Bottom;
+            left.Children.Add(title);
+            left.Children.Add(balance);
+
+            updated.VerticalAlignment = VerticalAlignment.Bottom;
+            updated.HorizontalAlignment = HorizontalAlignment.Right;
+
+            grid.Children.Add(left);
             grid.Children.Add(updated);
             return grid;
         }
@@ -659,7 +681,15 @@ namespace LlmLimitsOverlay {
                     card.RowFree.ToolTip = freeTooltip;
                     card.BarFree.ToolTip = freeTooltip;
                 }
-                card.TxtBalance.Text = string.Format(CultureInfo.InvariantCulture, OverlayTheme.BalanceLabelFormat, or.LimitRemaining);
+                // Кредит в шапке; при отсутствии данных (лимит 0) блок скрыт — заголовок не сдвигается
+                if (card.TxtBalanceHeader != null) {
+                    if (or.Limit > 0) {
+                        card.TxtBalanceHeader.Visibility = Visibility.Visible;
+                        card.TxtBalanceHeader.Text = string.Format(CultureInfo.InvariantCulture, OverlayTheme.BalanceLabelFormat, or.LimitRemaining);
+                    } else {
+                        card.TxtBalanceHeader.Visibility = Visibility.Collapsed;
+                    }
+                }
             } else {
                 var k = st.Kimi;
                 if (k == null) return;
