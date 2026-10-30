@@ -22,13 +22,13 @@ func runTray() {
 
 func onTrayReady() {
 	systray.SetTitle("LLM Limits Overlay")
-	systray.SetTooltip("LLM Limits Overlay (Go PoC)")
+	systray.SetTooltip("LLM Limits Overlay")
 	if len(appIcon) > 0 {
 		systray.SetIcon(appIcon)
 	}
 
 	mToggle = systray.AddMenuItem("Скрыть оверлей", "Переключить видимость")
-	mRefresh = systray.AddMenuItem("Обновить квоты", "Принудительное обновление (PoC: no-op)")
+	mRefresh = systray.AddMenuItem("Обновить квоты", "Принудительное обновление квот")
 	mClick = systray.AddMenuItemCheckbox("Клики насквозь", "Переключить click-through", clickThrough.Load())
 	mReset = systray.AddMenuItem("Сбросить позицию", "Вернуть окно в правый-нижний угол")
 	systray.AddSeparator()
@@ -39,7 +39,8 @@ func onTrayReady() {
 		case <-mToggle.ClickedCh:
 			toggleVisibility()
 		case <-mRefresh.ClickedCh:
-			fmt.Println("tray: refresh requested (PoC no-op)")
+			fmt.Println("tray: refresh requested")
+			go doFetch(true)
 		case <-mClick.ClickedCh:
 			toggleClickThroughFromTray()
 		case <-mReset.ClickedCh:

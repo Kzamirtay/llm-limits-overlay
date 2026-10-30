@@ -387,28 +387,34 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/ll
 - Ключи/конфиг/кэш взаимозаменяемы с C#-версией (тот же `overlay.config.json`, `.env`, кэш agy /usage, `limits.json`).
 - WPF GUI по-прежнему на C#; Go пока покрывает фетч + CLI.
 
-#### 7. Go GUI (PoC)
-Proof-of-concept HUD-оверлея на [Wails v2](https://wails.io/) (Go + WebKit/WebView2) находится в `go/cmd/overlay/`. Реализован как база для миграции GUI с C#/WPF на Go.
+#### 7. Go GUI (Wails Overlay)
+Полноценный нативный HUD-оверлей на [Wails v2](https://wails.io/) (Go + WebKit/WebView2) находится в `go/cmd/overlay/`. Реализован полный паритет с C#/WPF-версией с единым движком фетча квот.
 
 - **Стек**: Go 1.27, Wails v2 (`github.com/wailsapp/wails/v2`), статический HTML/CSS без npm/node (`frontend/dist/`), `fyne.io/systray` для трея, Win32 API (`RegisterHotKey`, `SetWindowLongPtr`).
-- **Проверенные возможности PoC**:
-  - **Прозрачность и визуал**: Frameless-окно (`WindowIsTranslucent`, `WebviewIsTransparent`) с плавающими полупрозрачными тёмными карточками (`rgba(30, 41, 59, 0.70)`), блюром фона и тонкими индикаторами для KIMI, OPENROUTER и GEMINI + CLAUDE/GPT.
-  - **Always-on-Top**: Закрепление поверх всех окон (`AlwaysOnTop = true`).
-  - **Клики насквозь (Click-Through)**: Глобальный хоткей `Ctrl+Alt+L` переключает стили `WS_EX_TRANSPARENT | WS_EX_LAYERED`, позволяя кликам проходить сквозь оверлей.
-  - **Трей и контекстное меню**: Нативная иконка в трее с пунктами меню (*Скрыть/Показать*, *Обновить*, *Клики насквозь*, *Сбросить позицию*, *Выход*).
-  - **Перетаскивание**: Нативный drag за карточки через `--wails-draggable: drag` в интерактивном режиме.
+- **Ключевые возможности**:
+  - **Реальный движок фетча**: Подключен `go/internal/fetchers` с таймаутами (HTTP 3.5с, agy 8с Windows / 20с Linux), кэшем agy /usage (300с), провайдерами из `overlay.config.json` (kimi, openrouter, agy), поддержкой плейсхолдеров `no_key` и логированием в `overlay.log` рядом с exe.
+  - **Динамический UI**: Карточки строятся на лету по конфигурации (title из конфига) с точным визуальным паритетом с C#:
+    - *Kimi*: два прогресс-бара (5ч и 7д) со временем сброса и статусом.
+    - *OpenRouter*: процент использования, баланс/кредит в шапке рядом с заголовком, отдельный бар для free tier с процентом.
+    - *Agy (Gemini + Claude/GPT)*: четыре бакета (Gemini 5ч/неделя, Claude 5ч/неделя).
+    - Относительное время в заголовке («только что», «N мин», «N мин (stale)», «нет ключа») с локальным тикером обновления каждые 10с.
+  - **Always-on-Top & Прозрачность**: Frameless-окно (`WindowIsTranslucent`, `WebviewIsTransparent`) с плавающими тёмными полупрозрачными карточками (`rgba(30, 41, 59, 0.70)`) и блюром фона.
+  - **Клики насквозь (Click-Through)**: Глобальный хоткей `Ctrl+Alt+L` переключает стили `WS_EX_TRANSPARENT | WS_EX_LAYERED`, синхронизирован с трей-меню и сохраняется в `overlay.config.json`.
+  - **Трей и контекстное меню**: Нативная иконка в трее с пунктами меню (*Обновить квоты*, *Показать/Скрыть*, *Клики насквозь*, *Сбросить позицию*, *Выход*).
+  - **Персистентность и Single-Instance**: Позиция окна сохраняется в `window.pos.json` рядом с exe; встроенная защита `SingleInstanceLock` блокирует запуск повторных процессов и активирует уже открытое окно.
+  - **Взаимозаменяемость**: Форматы `limits.json` и кэш-файлов идентичны C#-версии.
 - **Сборка**:
   ```bash
-  # Windows (кросс-компиляция из Linux через MinGW)
+  # Windows exe (~7.7–12 МБ, кросс-компиляция из Linux через MinGW)
   cd go/cmd/overlay
   CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 ~/go/bin/wails build -platform windows/amd64 -skipbindings
 
-  # Linux (нативная сборка)
+  # Linux бинарник (~9–11 МБ)
   cd go/cmd/overlay
   ~/go/bin/wails build -skipbindings
   ```
-- **Бинарники**: В `go/dist/` (Windows `.exe`: ~12 МБ, Linux: ~9.1 МБ).
-- **Проверка на Windows**: Автоматизированный скрипт `powershell.exe -ExecutionPolicy Bypass -File go/verify-overlay.ps1` проверяет frameless-стили, always-on-top, переключение хоткея, наличие трея и прозрачность (различие MD5-хэшей скриншотов на белой и чёрной подложках).
+- **Бинарники**: В `go/dist/`: `llm-limits-overlay.exe` (Windows amd64) и `llm-limits-overlay` (Linux amd64).
+- **Проверка на Windows**: Автоматизированный скрипт `go/verify-stage3.ps1` тестирует живые ключи (циклы опроса), различие MD5-хэшей скриншотов на контрастных подложках, хоткей `Ctrl+Alt+L`, трей, single-instance, персист позиции и сценарии `no_key` и `stale`.
 
 ---
 

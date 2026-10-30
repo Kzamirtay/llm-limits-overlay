@@ -389,28 +389,34 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/ll
 - Keys/config/cache formats are interchangeable with the C# version (same `overlay.config.json`, `.env`, agy /usage cache, `limits.json`).
 - The WPF GUI still uses the C# implementation; Go currently covers fetch + CLI only.
 
-#### 7. Go GUI (PoC)
-A proof-of-concept HUD overlay based on [Wails v2](https://wails.io/) (Go + WebKit/WebView2) lives in `go/cmd/overlay/`. It serves as the foundation for the cross-platform migration of the GUI from C#/WPF to Go.
+#### 7. Go GUI (Wails Overlay)
+A native HUD overlay based on [Wails v2](https://wails.io/) (Go + WebKit/WebView2) lives in `go/cmd/overlay/`. It delivers feature and visual parity with the C#/WPF version while sharing the Go fetch engine.
 
 - **Stack**: Go 1.27, Wails v2 (`github.com/wailsapp/wails/v2`), static HTML/CSS without npm/node dependencies (`frontend/dist/`), `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `SetWindowLongPtr`).
-- **Features verified in PoC**:
-  - **Translucency & Alpha**: Borderless frameless window (`WindowIsTranslucent`, `WebviewIsTransparent`) with floating dark translucent cards (`rgba(30, 41, 59, 0.70)`), background blur, and fine progress indicators for KIMI, OPENROUTER, and GEMINI + CLAUDE/GPT.
-  - **Always-on-Top**: Floats above all desktop windows (`AlwaysOnTop = true`).
-  - **Click-Through Mode**: Global hotkey `Ctrl+Alt+L` toggles `WS_EX_TRANSPARENT | WS_EX_LAYERED` styles so clicks pass through seamlessly when enabled.
-  - **System Tray & Menu**: Native tray icon with menu items (*Показать/Скрыть*, *Обновить*, *Клики насквозь*, *Сбросить позицию*, *Выход*).
-  - **Dragging**: Smooth drag-to-reposition via `--wails-draggable: drag` when click-through is inactive.
+- **Core Features**:
+  - **Integrated Fetch Engine**: Powered directly by `go/internal/fetchers` with configurable timeouts (HTTP 3.5s, agy 8s Windows / 20s Linux), agy /usage cache (300s), `overlay.config.json` providers (kimi, openrouter, agy), `no_key` placeholder detection, and diagnostic logging to `overlay.log`.
+  - **Dynamic Card UI**: Cards are constructed dynamically from configuration (titles sourced from config) with visual parity to the C# WPF client:
+    - *Kimi*: Dual progress bars (5-hour and 7-day) with reset countdowns and severity colors.
+    - *OpenRouter*: Used percentage, balance/credit indicator next to the card title, and a dedicated free tier usage bar.
+    - *Agy (Gemini + Claude/GPT)*: Four quota buckets (Gemini 5h/weekly, Claude 5h/weekly).
+    - Relative timestamp in headers ("только что", "N мин", "N мин (stale)", "нет ключа") updating via a local 10s ticker without extra badges.
+  - **Always-on-Top & Translucency**: Frameless window (`WindowIsTranslucent`, `WebviewIsTransparent`) with floating dark translucent cards (`rgba(30, 41, 59, 0.70)`) and backdrop blur.
+  - **Click-Through Mode**: Global hotkey `Ctrl+Alt+L` toggles `WS_EX_TRANSPARENT | WS_EX_LAYERED` styles so clicks pass through to background apps, synchronized with the tray menu and persisted in `overlay.config.json`.
+  - **System Tray & Menu**: Native tray icon with actions (*Обновить квоты*, *Показать/Скрыть*, *Клики насквозь*, *Сбросить позицию*, *Выход*).
+  - **Persistence & Single-Instance**: Window position is automatically saved to `window.pos.json` next to the executable; `SingleInstanceLock` prevents duplicate instances and focuses the existing window.
+  - **Full Interchangeability**: `limits.json` and cache fragment schemas remain compatible with the C# version.
 - **Build**:
   ```bash
-  # Windows (cross-compile from Linux via MinGW)
+  # Windows exe (~7.7–12 MB, cross-compile from Linux via MinGW)
   cd go/cmd/overlay
   CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 ~/go/bin/wails build -platform windows/amd64 -skipbindings
 
-  # Linux (native)
+  # Linux binary (~9–11 MB)
   cd go/cmd/overlay
   ~/go/bin/wails build -skipbindings
   ```
-- **Binaries**: Output in `go/dist/` (Windows `.exe`: ~12 MB, Linux: ~9.1 MB).
-- **Verification on Windows**: Automated test via `powershell.exe -ExecutionPolicy Bypass -File go/verify-overlay.ps1` verifies window styles, tray presence, hotkey toggling, and background translucency (MD5 checksum divergence on white vs black backdrops).
+- **Binaries**: Stored in `go/dist/`: `llm-limits-overlay.exe` (Windows amd64) and `llm-limits-overlay` (Linux amd64).
+- **Verification on Windows**: Automated test via `powershell.exe -ExecutionPolicy Bypass -File go/verify-stage3.ps1` validates live key fetch cycles, translucent screenshot checksum divergence, `Ctrl+Alt+L` click-through toggling, systray presence, single-instance enforcement, position restoration, and `no_key` & `stale` handling.
 
 ---
 

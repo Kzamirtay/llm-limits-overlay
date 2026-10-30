@@ -11,9 +11,10 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const windowTitle = "LLM Limits Overlay PoC"
+const windowTitle = "LLM Limits Overlay"
 
 //go:embed all:frontend/dist
 var assets embed.FS
@@ -25,16 +26,18 @@ var clickThrough atomic.Bool
 
 func main() {
 	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
-		fmt.Println("PoC supports windows/linux only")
+		fmt.Println("LLM Limits Overlay supports windows/linux only")
 		os.Exit(1)
 	}
+
+	initAppDir()
 
 	// Win32-хоткей + click-through (только Windows)
 	if runtime.GOOS == "windows" {
 		go runHotkeyLoop(windowTitle, &clickThrough)
 	}
 
-	// трей (fyne.io/systray) — в горутине
+	// Трей (fyne.io/systray) в горутине
 	go runTray()
 
 	err := wails.Run(&options.App{
@@ -47,6 +50,15 @@ func main() {
 		WindowStartState:  options.Normal,
 		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
 		Assets:            &assets,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "llm-limits-overlay-instance-guid-52b36ded",
+			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
+				if wailsCtx != nil {
+					wailsrt.WindowShow(wailsCtx)
+					wailsrt.WindowUnminimise(wailsCtx)
+				}
+			},
+		},
 		Windows: &windows.Options{
 			WindowIsTranslucent:               true,
 			WebviewIsTransparent:              true,
@@ -57,7 +69,12 @@ func main() {
 		Bind:  []interface{}{},
 		OnStartup: func(ctx context.Context) {
 			setWailsContext(ctx)
-			go positionBottomRight(ctx)
+		},
+		OnShutdown: func(ctx context.Context) {
+			if wailsCtx != nil {
+				x, y := wailsrt.WindowGetPosition(wailsCtx)
+				saveWindowPosition(appDir, x, y)
+			}
 		},
 	})
 	if err != nil {

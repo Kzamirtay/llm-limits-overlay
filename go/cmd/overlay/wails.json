@@ -1,6 +1,6 @@
 {
-  "name": "llm-limits-overlay-poc",
-  "outputfilename": "llm-limits-overlay-poc",
+  "name": "llm-limits-overlay",
+  "outputfilename": "llm-limits-overlay",
   "frontend:install": "true",
   "frontend:build": "true",
   "wailsjsdir": "./frontend/wailsjs",

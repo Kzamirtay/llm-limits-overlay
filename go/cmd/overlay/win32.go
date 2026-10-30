@@ -144,7 +144,20 @@ func runHotkeyLoop(title string, state *atomic.Bool) {
 			hwnd := findOverlayHWND(title)
 			setClickThrough(hwnd, now)
 			updateTrayClickThrough(now)
+			if cfg != nil {
+				cfg.SaveClickThrough(now)
+			}
 			fmt.Println("hotkey: click-through =", now)
+		}
+	}
+}
+
+func initPlatformWindow(title string) {
+	hwnd := getOverlayHWNDWithRetry(title)
+	if hwnd != 0 {
+		initWindowStyles(hwnd)
+		if clickThrough.Load() {
+			setClickThrough(hwnd, true)
 		}
 	}
 }
@@ -160,8 +173,5 @@ func positionBottomRight(ctx context.Context) {
 	wailsrt.WindowSetPosition(ctx, x, y)
 	fmt.Printf("position: screen %dx%d -> window (%d,%d)\n", w, h, x, y)
 
-	hwnd := getOverlayHWNDWithRetry(windowTitle)
-	if hwnd != 0 {
-		initWindowStyles(hwnd)
-	}
+	initPlatformWindow(windowTitle)
 }

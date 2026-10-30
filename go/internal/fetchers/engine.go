@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"llmlimits/internal/config"
@@ -108,7 +109,7 @@ func FetchAll(cfg *config.Config, opts Options) *model.Snapshot {
 		}
 	}
 
-	snap := assemble(appDir, nowIso, agyRes, providerBlocks)
+	snap := assemble(cfg, appDir, nowIso, agyRes, providerBlocks)
 	return snap
 }
 
@@ -122,7 +123,7 @@ func timeAfterMs(ms int) <-chan struct{} {
 }
 
 // assemble — мердж, запись limits.json/фрагментов, снимок.
-func assemble(appDir, nowIso string, agyRes *AgyResult, providerBlocks map[string]map[string]interface{}) *model.Snapshot {
+func assemble(cfg *config.Config, appDir, nowIso string, agyRes *AgyResult, providerBlocks map[string]map[string]interface{}) *model.Snapshot {
 	snap := &model.Snapshot{LastUpdated: nowIso}
 	data := map[string]interface{}{}
 
@@ -145,8 +146,14 @@ func assemble(appDir, nowIso string, agyRes *AgyResult, providerBlocks map[strin
 		snap.Claude5h = bucketFromMap(agyRes.Buckets.Claude5h)
 		snap.ClaudeWeekly = bucketFromMap(agyRes.Buckets.ClaudeWeekly)
 
+		title := "GEMINI + CLAUDE/GPT"
+		if cfg != nil {
+			if p := cfg.FindProvider("agy"); p != nil && p.Title != "" {
+				title = p.Title
+			}
+		}
 		snap.Providers = append(snap.Providers, &model.ProviderState{
-			Id: "agy", Kind: "agy", Status: agyRes.Status, LastUpdated: agyRes.LastUpdated,
+			Id: "agy", Kind: "agy", Title: title, Status: agyRes.Status, LastUpdated: agyRes.LastUpdated,
 		})
 	}
 
@@ -188,8 +195,15 @@ func assemble(appDir, nowIso string, agyRes *AgyResult, providerBlocks map[strin
 	// ProviderState для CLI/GUI-рендеринга
 	for _, id := range orderedIds(providerBlocks) {
 		block := providerBlocks[id]
+		title := strings.ToUpper(id)
+		if cfg != nil {
+			if p := cfg.FindProvider(id); p != nil && p.Title != "" {
+				title = p.Title
+			}
+		}
 		st := &model.ProviderState{
 			Id:          id,
+			Title:       title,
 			Status:      getStr(block, "status"),
 			LastUpdated: getStr(block, "last_updated"),
 		}
@@ -203,6 +217,106 @@ func assemble(appDir, nowIso string, agyRes *AgyResult, providerBlocks map[strin
 		snap.Providers = append(snap.Providers, st)
 	}
 
+	return snap
+}
+
+// LoadSnapshotFromDisk читает кэш из limits.json / фрагментов без сетевых запросов.
+func LoadSnapshotFromDisk(cfg *config.Config, appDir string) *model.Snapshot {
+	nowIso := NowIso()
+	var agyRes *AgyResult
+	if frag := loadCachedProviderBlocks(appDir, "agy"); frag != nil {
+		agyRes = &AgyResult{
+			Status:      getStr(frag, "status"),
+			LastUpdated: getStr(frag, "last_updated"),
+		}
+		if b := agyBucketsFromBlock(frag); b != nil {
+			agyRes.Buckets = *b
+		}
+	} else if root := loadLimitsJson(appDir); root != nil {
+		if d := getMap(root, "data"); d != nil {
+			if agyData := getMap(d, "agy"); agyData != nil {
+				agyRes = &AgyResult{
+					Status:      getStr(agyData, "status"),
+					LastUpdated: getStr(agyData, "last_updated"),
+				}
+				if b := agyBucketsFromBlock(agyData); b != nil {
+					agyRes.Buckets = *b
+				}
+			}
+		}
+	}
+
+	providerBlocks := map[string]map[string]interface{}{}
+	if cfg != nil {
+		for _, p := range cfg.EffectiveProviders() {
+			if !p.Enabled || p.Type == "agy" {
+				continue
+			}
+			if block := loadCachedProvider(appDir, p.Id); block != nil {
+				providerBlocks[p.Id] = block
+			}
+		}
+	}
+
+	if agyRes == nil && len(providerBlocks) == 0 {
+		return nil
+	}
+
+	snap := &model.Snapshot{LastUpdated: nowIso}
+	allStatuses := []string{}
+	if agyRes != nil {
+		allStatuses = append(allStatuses, agyRes.Status)
+		snap.AgyStatus = agyRes.Status
+		snap.AgyLastUpdated = agyRes.LastUpdated
+		snap.Gemini5h = bucketFromMap(agyRes.Buckets.Gemini5h)
+		snap.GeminiWeekly = bucketFromMap(agyRes.Buckets.GeminiWeekly)
+		snap.Claude5h = bucketFromMap(agyRes.Buckets.Claude5h)
+		snap.ClaudeWeekly = bucketFromMap(agyRes.Buckets.ClaudeWeekly)
+
+		title := "GEMINI + CLAUDE/GPT"
+		if cfg != nil {
+			if p := cfg.FindProvider("agy"); p != nil && p.Title != "" {
+				title = p.Title
+			}
+		}
+		snap.Providers = append(snap.Providers, &model.ProviderState{
+			Id: "agy", Kind: "agy", Title: title, Status: agyRes.Status, LastUpdated: agyRes.LastUpdated,
+		})
+	}
+
+	for _, id := range orderedIds(providerBlocks) {
+		block := providerBlocks[id]
+		allStatuses = append(allStatuses, getStr(block, "status"))
+		title := strings.ToUpper(id)
+		if cfg != nil {
+			if p := cfg.FindProvider(id); p != nil && p.Title != "" {
+				title = p.Title
+			}
+		}
+		st := &model.ProviderState{
+			Id:          id,
+			Title:       title,
+			Status:      getStr(block, "status"),
+			LastUpdated: getStr(block, "last_updated"),
+		}
+		if _, ok := block["limit_5h"]; ok {
+			st.Kind = "kimi"
+			st.Kimi = KimiToState(block)
+		} else {
+			st.Kind = "openrouter"
+			st.OpenRouter = OpenRouterToState(block)
+		}
+		snap.Providers = append(snap.Providers, st)
+	}
+
+	rootStatus := "error"
+	for _, s := range allStatuses {
+		if s == "online" {
+			rootStatus = "online"
+			break
+		}
+	}
+	snap.Status = rootStatus
 	return snap
 }
 

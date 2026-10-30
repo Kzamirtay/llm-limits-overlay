@@ -10,6 +10,9 @@ func toggleClickThroughFromTray() {
 	hwnd := findOverlayHWND(windowTitle)
 	setClickThrough(hwnd, now)
 	updateTrayClickThrough(now)
+	if cfg != nil {
+		cfg.SaveClickThrough(now)
+	}
 	fmt.Println("tray: click-through =", now)
 }
 
