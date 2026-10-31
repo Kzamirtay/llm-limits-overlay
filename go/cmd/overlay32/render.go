@@ -395,12 +395,13 @@ func getRelativeTimeString(updatedIso, status string) (string, uint32) {
 	return baseText, colorLabel
 }
 
-// formatPercent — точный формат C#: b.Percent + "%"
+// formatPercent — точный формат C#: b.Percent + "%" с запятой как в русской культуре
 func formatPercent(pct float64) string {
-	if math.Mod(pct*10, 10) == 0 {
-		return fmt.Sprintf("%.0f%%", pct)
+	s := fmt.Sprintf("%.1f%%", pct)
+	if strings.HasSuffix(s, ".0%") {
+		return strings.Replace(s, ".0%", "%", 1)
 	}
-	return fmt.Sprintf("%.1f%%", pct)
+	return strings.Replace(s, ".", ",", 1)
 }
 
 func getPercentColorAndFont(pct, frac float64, r *Renderer) (uint32, uintptr) {
