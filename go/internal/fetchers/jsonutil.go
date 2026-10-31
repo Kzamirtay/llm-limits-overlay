@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 )
 
 func marshalPretty(v interface{}) ([]byte, error) {
@@ -66,12 +66,20 @@ func hasNonNull(d map[string]interface{}, key string) bool {
 	return ok && v != nil
 }
 
+var logFileName = "overlay.log"
+
+func SetLogFileName(name string) {
+	if name != "" {
+		logFileName = name
+	}
+}
+
 // LogLine — одна строка в overlay.log (appDir), формат как в C#-версии.
 func LogLine(appDir, msg string) {
 	if appDir == "" {
 		return
 	}
-	f, err := os.OpenFile(strings.TrimRight(appDir, "/\\")+"/overlay.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(appDir, logFileName), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}

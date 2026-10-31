@@ -418,6 +418,22 @@ A native HUD overlay based on [Wails v2](https://wails.io/) (Go + WebKit/WebView
 - **Binaries**: Stored in `go/dist/`: `llm-limits-overlay.exe` (Windows amd64) and `llm-limits-overlay` (Linux amd64).
 - **Verification on Windows**: Automated test via `powershell.exe -ExecutionPolicy Bypass -File go/verify-stage3.ps1` validates live key fetch cycles, translucent screenshot checksum divergence, `Ctrl+Alt+L` click-through toggling, systray presence, single-instance enforcement, position restoration, and `no_key` & `stale` handling.
 
+#### 8. Go GUI (Win32 Layered Window — PoC without WebView2)
+An experimental ultra-lightweight HUD overlay based on pure **Win32 Layered Windows** and GDI+ rendering (`gdiplus.dll`) lives in `go/cmd/overlay32/`.
+
+- **Stack**: Pure Go (`CGO_ENABLED=0`), `UpdateLayeredWindow` with a 32-bit DIB section (BGRA, premultiplied alpha), GDI+ for anti-aliasing and ClearType typography, `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `HTCAPTION` drag).
+- **Resource Footprint**:
+  - Memory (WorkingSet64): **~30 MB** (half of WPF's 66 MB, and 13x lighter than Wails' 389 MB).
+  - Child Processes: **0** (no WebView2 / Chromium processes).
+  - CPU (60s total): **~0.05s**.
+  - Binary Size: **7.35 MB** (pure Go static executable, no CGO or MinGW required).
+- **Build**:
+  ```bash
+  cd go
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -o dist/llm-limits-overlay32.exe ./cmd/overlay32
+  ```
+- **Verification on Windows**: Automated test via `go/verify-overlay32.ps1` verifies background translucency, system tray presence, `Ctrl+Alt+L` click-through toggling, dragging, and position restoration.
+
 ---
 
 ## Diagnostics & Logs

@@ -416,6 +416,22 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/ll
 - **Бинарники**: В `go/dist/`: `llm-limits-overlay.exe` (Windows amd64) и `llm-limits-overlay` (Linux amd64).
 - **Проверка на Windows**: Автоматизированный скрипт `go/verify-stage3.ps1` тестирует живые ключи (циклы опроса), различие MD5-хэшей скриншотов на контрастных подложках, хоткей `Ctrl+Alt+L`, трей, single-instance, персист позиции и сценарии `no_key` и `stale`.
 
+#### 8. Go GUI (Win32 Layered Window — PoC без WebView2)
+Экспериментальный легковесный HUD-оверлей на чистом **Win32 Layered Window** с отрисовкой через GDI+ (`gdiplus.dll`) находится в `go/cmd/overlay32/`.
+
+- **Стек**: Чистый Go (сборка с `CGO_ENABLED=0`), `UpdateLayeredWindow` с 32-битным DIB-буфером (BGRA, premultiplied alpha), GDI+ для скруглений и ClearType-типографики, `fyne.io/systray` для трея, Win32 API (`RegisterHotKey`, `HTCAPTION` для drag).
+- **Потребление ресурсов**:
+  - Память (WorkingSet64): **~30 МБ** (в 2 раза меньше, чем у WPF 66 МБ, и в 13 раз меньше, чем у Wails 389 МБ).
+  - Дочерние процессы: **0** (нет процессов WebView2).
+  - CPU за 60с: **~0.05с**.
+  - Размер exe: **7.35 МБ** (статический бинарник, чистый Go без cgo и без gcc).
+- **Сборка**:
+  ```bash
+  cd go
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -o dist/llm-limits-overlay32.exe ./cmd/overlay32
+  ```
+- **Проверка на Windows**: Скрипт `go/verify-overlay32.ps1` проверяет прозрачность, трей, хоткей `Ctrl+Alt+L`, drag и персистентность позиции.
+
 ---
 
 ## Диагностика и логи
