@@ -273,15 +273,37 @@ The built-in C# parser supports:
 
 ---
 
+## Architecture & Memory Comparison
+
+Starting with version **2.0.0**, the primary production stack is pure **Go** (`CGO_ENABLED=0`):
+- **GUI Overlay (`llm-limits-overlay.exe`)**: A lightweight Always-on-Top HUD using native Win32 Layered Windows (`UpdateLayeredWindow` + 32-bit premultiplied ARGB DIB) and GDI+ rendering (`gdiplus.dll`). It requires no WebView2, no Chromium runtime, and zero external DLLs.
+- **CLI (`llm-limits.exe` / `llm-limits-linux-x64`)**: Standalone static command-line tool with zero runtime dependencies.
+- **C# / .NET Reference (`dotnet/`)**: The original C# / WPF implementation is preserved as the benchmark and reference implementation (releases ≤ 1.4.1).
+
+### Memory & Resource Footprint
+
+Measurements taken during active 60-second polling cycles on Windows 11 (64-bit):
+
+| Implementation | Stack | Memory (WorkingSet64) | Child Processes | Binary Size | Status in v2.0.0 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Go Win32 Native** | Go (`CGO_ENABLED=0`) + Win32 / GDI+ | **~31 MB** | **0** | **7.4 MB** | **Primary stack (v2.0.0+)** |
+| **C# / WPF** | C# (.NET Framework 4.8 / WPF) | **~66 MB** | **0** | ~130 KB (+ .NET 4.8) | Reference / benchmark (≤ 1.4.1) |
+| **Wails v2** | Go + WebKit / WebView2 | **~389 MB** | 4–6 (Chromium) | ~12 MB (+ WebView2) | Experimental |
+
+---
+
 ## Installation & Running
 
-The primary and only method for running the overlay is the compiled executable **`LlmLimitsOverlay.exe`**.
+The primary executable for the overlay in version 2.0.0+ is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
-> **The PowerShell version has been removed from master; it remains accessible in tag and release [v1.0.0](https://github.com/Kzamirtay/llm-limits-overlay/releases/tag/v1.0.0).** Starting with version v1.1.0, the project runs exclusively as a standalone native C# application (.NET Framework 4.8 / WPF). Since v1.2.0, Python and WSL are no longer required.
+> **Version History**:
+> - **v2.0.0+**: Primary stack is pure Go (Win32 Native HUD + CLI). C# version preserved in `dotnet/` as the benchmark.
+> - **v1.1.0–v1.4.1**: C# / .NET Framework 4.8 / WPF standalone application (`LlmLimitsOverlay.exe`).
+> - **v1.0.0**: PowerShell prototype (archived in git tag `v1.0.0`).
 
 ### Runtime Directory Requirements
-The following files must be located in the same directory as `LlmLimitsOverlay.exe`:
+The following files must be located in the same directory as `llm-limits-overlay.exe`:
 - `assets/app.ico` — Application icon for the HUD and system tray;
 - `overlay.config.json` — Configuration file (automatically generated if missing);
 - `.env` — API key configuration file (`OPENROUTER_API_KEY`, `KIMI_API_KEY`).
@@ -289,41 +311,52 @@ The following files must be located in the same directory as `LlmLimitsOverlay.e
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download the latest `LlmLimitsOverlay-vX.Y.Z-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download the latest `LlmLimitsOverlay-v2.0.0-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
 4. Ensure `agy.exe` is installed and you are signed in (`agy auth login`).
-5. Launch `LlmLimitsOverlay.exe` by double-clicking it in Windows Explorer or from the command line:
+5. Launch `llm-limits-overlay.exe` by double-clicking it in Windows Explorer or from the command line:
    ```cmd
-   LlmLimitsOverlay.exe
+   llm-limits-overlay.exe
    ```
-   The application starts cleanly as a Windows GUI subsystem process (`/target:winexe`) without console flashes.
+   The application starts cleanly as a Windows GUI subsystem process (`-H windowsgui`) without console flashes.
 
-#### 2. Building from Source
-If you cloned the repository and wish to compile the binary locally:
+#### 2. Building from Source (Go 2.0.0+)
+To build the Go GUI overlay and companion CLI from source:
+```bash
+cd go
+
+# Windows GUI Overlay (llm-limits-overlay.exe)
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -o dist/llm-limits-overlay.exe ./cmd/overlay32
+
+# Windows CLI (llm-limits.exe)
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limits.exe ./cmd/llm-limits
+
+# Linux CLI (llm-limits-linux-x64)
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limits-linux-x64 ./cmd/llm-limits
+```
+
+To compile the legacy C# reference binary:
 ```cmd
 dotnet\build.cmd
 ```
-The build script automatically locates the system compiler `csc.exe` (`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`), requires no Visual Studio, MSBuild, or .NET SDK installation, and produces an optimized standalone executable in:
-```
-dotnet\bin\LlmLimitsOverlay.exe
-```
-Technical architecture details are documented in [dotnet/README.md](dotnet/README.md).
+Produces `dotnet\bin\LlmLimitsOverlay.exe` via system `csc.exe`. Technical details are in [dotnet/README.md](dotnet/README.md).
 
-#### 3. Windows Installer (v1.2.0+)
-A per-user Windows installer is available: `LlmLimitsOverlay-Setup-1.4.1.exe` (Inno Setup 6).
+#### 3. Windows Installer (v2.0.0+)
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.0.0.exe` (Inno Setup 6).
 
 **Features:**
-- Installs to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
+- Installs `llm-limits-overlay.exe` (GUI) and `llm-limits.exe` (CLI) to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
 - Creates Start Menu shortcut (always); optional Desktop shortcut and optional autostart (HKCU Run).
+- Adds `llm-limits.exe` to user `PATH` (clean removal on uninstall).
 - Registers uninstall entry in "Apps & Features" / "Programs and Features".
 - **Preserves your `.env` file** on upgrade and uninstall (`onlyifdoesntexist`, `uninsneveruninstall`).
 - Closes any running overlay instance from the same install location before installing/updating.
-- Data files (`limits*.json`, `overlay.log`) are removed on uninstall; `.env` is kept.
+- Data files (`limits*.json`, `overlay.log`, `overlay32.log`, `window.pos.json`) are removed on uninstall; `.env` is kept.
 
 **Silent install (for automation):**
 ```cmd
-LlmLimitsOverlay-Setup-1.4.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.
@@ -333,10 +366,11 @@ LlmLimitsOverlay-Setup-1.4.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 "%LOCALAPPDATA%\LlmLimitsOverlay\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
-#### 4. CLI: `llm-limits.exe`
-A companion console utility ships next to the GUI (same fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
+#### 4. Windows & Linux CLI: `llm-limits`
+A companion console utility ships next to the GUI (same Go fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
 
 ```cmd
+llm-limits --version         # prints "llm-limits 2.0.0"
 llm-limits --json            # works from any folder — installer adds it to your user PATH
 llm-limits --provider kimi
 llm-limits --watch 30        # refresh loop; Ctrl+C to exit
@@ -350,11 +384,11 @@ llm-limits --env .env --agy-bin C:\tools\agy.exe
 - `--no-color` and the `NO_COLOR` environment variable disable ANSI colors.
 - In `--watch` mode with redirected (non-TTY) output the tool prints one block per tick instead of redrawing the screen.
 - Exit codes: `0` — all providers online; `2` — some providers stale or missing key (`no_key`); `1` — all failed or bad arguments.
-- If a provider key is a placeholder (not set), its status is `no_key` — no HTTP request is made, and the card shows `нет ключа`. Fill in real keys in `.env` next to `LlmLimitsOverlay.exe`.
+- If a provider key is a placeholder (not set), its status is `no_key` — no HTTP request is made, and the card shows `нет ключа`. Fill in real keys in `.env` next to `llm-limits-overlay.exe`.
 - API keys and raw OpenRouter labels are never printed (labels are masked, same as in `limits.json`).
 
 #### 5. Linux CLI (`llm-limits-linux-x64`)
-A self-contained Linux build of the same CLI ships in releases (`llm-limits-linux-x64`). It needs nothing installed — .NET runtime is bundled.
+A standalone, statically linked pure Go Linux binary is provided in releases: `llm-limits-linux-x64` (~7 MB, pure Go, zero runtime dependencies).
 
 ```bash
 # copy to your user bin and make executable
@@ -362,66 +396,19 @@ mkdir -p ~/.local/bin
 cp llm-limits-linux-x64 ~/.local/bin/llm-limits
 chmod +x ~/.local/bin/llm-limits
 
+llm-limits --version
 llm-limits --json
 llm-limits --watch 30
 ```
 
 - Keys are read from `.env` **next to the binary** (or `--env <path>`).
-- The Gemini/Claude card requires the native Linux `agy` binary: it is resolved from `LLM_LIMITS_AGY_BIN`, then `PATH`, then `~/.local/bin/agy`, `/usr/local/bin/agy`. The OAuth token is read from `~/.gemini/antigravity-cli/antigravity-oauth-token`.
+- The Gemini/Claude card requires the native Linux `agy` binary: resolved from `LLM_LIMITS_AGY_BIN`, `PATH`, `~/.local/bin/agy`, `/usr/local/bin/agy`. The OAuth token is read from `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Everything else (Kimi, OpenRouter) works without `agy`.
-- Release binary `llm-limits-linux-x64` is ~**16 MB** (self-contained .NET 8, **trimmed** single-file publish — `PublishTrimmed=true`; without trimming it would be ~67 MB). Reproducible build:
-  ```bash
-  dotnet/build-linux.sh   # or: dotnet publish dotnet/LlmLimitsCli.Linux -c Release -r linux-x64 \
-                          #   --self-contained true -p:PublishSingleFile=true \
-                          #   -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=true -o dist/linux
-  ```
+- **Linux GUI Support Note**: The native HUD overlay uses Win32 Layered Windows and GDI+ APIs (`user32.dll`, `gdiplus.dll`) and is Windows-specific. On Linux, a GUI cannot be compiled without cgo (Wails requires cgo and WebKit2GTK / GTK3 development headers). Therefore, Linux is officially supported via the standalone static CLI (`llm-limits-linux-x64`).
 
-#### 6. Go CLI (experimental)
-A pure-Go port of the same fetch engine + CLI lives in `go/` (no cgo; builds for Linux and Windows from one source). It mirrors the C# CLI: same flags, same `limits.json` schema, same exit codes.
-
-```bash
-cd go
-go build -o dist/llm-limits ./cmd/llm-limits                 # Linux
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/llm-limits
-```
-
-- ~**11 MB** static binary, no runtime needed (vs ~16 MB .NET trimmed / ~67 MB untrimmed).
-- Keys/config/cache formats are interchangeable with the C# version (same `overlay.config.json`, `.env`, agy /usage cache, `limits.json`).
-- The WPF GUI still uses the C# implementation; Go currently covers fetch + CLI only.
-
-#### 7. Go GUI (Wails Overlay)
-A native HUD overlay based on [Wails v2](https://wails.io/) (Go + WebKit/WebView2) lives in `go/cmd/overlay/`. It delivers feature and visual parity with the C#/WPF version while sharing the Go fetch engine.
-
-- **Stack**: Go 1.27, Wails v2 (`github.com/wailsapp/wails/v2`), static HTML/CSS without npm/node dependencies (`frontend/dist/`), `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `SetWindowLongPtr`).
-- **Core Features**:
-  - **Integrated Fetch Engine**: Powered directly by `go/internal/fetchers` with configurable timeouts (HTTP 3.5s, agy 8s Windows / 20s Linux), agy /usage cache (300s), `overlay.config.json` providers (kimi, openrouter, agy), `no_key` placeholder detection, and diagnostic logging to `overlay.log`.
-  - **Dynamic Card UI**: Cards are constructed dynamically from configuration (titles sourced from config) with visual parity to the C# WPF client:
-    - *Kimi*: Dual progress bars (5-hour and 7-day) with reset countdowns and severity colors.
-    - *OpenRouter*: Used percentage, balance/credit indicator next to the card title, and a dedicated free tier usage bar.
-    - *Agy (Gemini + Claude/GPT)*: Four quota buckets (Gemini 5h/weekly, Claude 5h/weekly).
-    - Relative timestamp in headers ("только что", "N мин", "N мин (stale)", "нет ключа") updating via a local 10s ticker without extra badges.
-  - **Always-on-Top & Translucency**: Frameless window (`WindowIsTranslucent`, `WebviewIsTransparent`) with floating dark translucent cards (`rgba(30, 41, 59, 0.70)`) and backdrop blur.
-  - **Click-Through Mode**: Global hotkey `Ctrl+Alt+L` toggles `WS_EX_TRANSPARENT | WS_EX_LAYERED` styles so clicks pass through to background apps, synchronized with the tray menu and persisted in `overlay.config.json`.
-  - **System Tray & Menu**: Native tray icon with actions (*Обновить квоты*, *Показать/Скрыть*, *Клики насквозь*, *Сбросить позицию*, *Выход*).
-  - **Persistence & Single-Instance**: Window position is automatically saved to `window.pos.json` next to the executable; `SingleInstanceLock` prevents duplicate instances and focuses the existing window.
-  - **Full Interchangeability**: `limits.json` and cache fragment schemas remain compatible with the C# version.
-- **Build**:
-  ```bash
-  # Windows exe (~7.7–12 MB, cross-compile from Linux via MinGW)
-  cd go/cmd/overlay
-  CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 ~/go/bin/wails build -platform windows/amd64 -skipbindings
-
-  # Linux binary (~9–11 MB)
-  cd go/cmd/overlay
-  ~/go/bin/wails build -skipbindings
-  ```
-- **Binaries**: Stored in `go/dist/`: `llm-limits-overlay.exe` (Windows amd64) and `llm-limits-overlay` (Linux amd64).
-- **Verification on Windows**: Automated test via `powershell.exe -ExecutionPolicy Bypass -File go/verify-stage3.ps1` validates live key fetch cycles, translucent screenshot checksum divergence, `Ctrl+Alt+L` click-through toggling, systray presence, single-instance enforcement, position restoration, and `no_key` & `stale` handling.
-
-#### 8. Go GUI (Win32 Layered Window — Native Overlay without WebView2)
-A lightweight HUD overlay based on pure **Win32 Layered Windows** and GDI+ rendering (`gdiplus.dll`) lives in `go/cmd/overlay32/`. In Stage 5, it achieves 1:1 visual and behavioral parity with the reference C#/WPF overlay.
-
-- **Stack**: Pure Go (`CGO_ENABLED=0`), `UpdateLayeredWindow` with a 32-bit DIB section (BGRA, premultiplied alpha), GDI+ for anti-aliasing and ClearType typography, `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `HTCAPTION` drag).
+#### 6. Go Native GUI Architecture (Win32 Layered Window)
+The v2.0.0 GUI (`llm-limits-overlay.exe`) is implemented in pure Go (`go/cmd/overlay32`) with zero CGO dependencies:
+- **Stack**: Pure Go (`CGO_ENABLED=0`), `UpdateLayeredWindow` with a 32-bit DIB section (BGRA, premultiplied alpha), GDI+ for anti-aliasing and typography, `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `HTCAPTION` drag).
 - **1:1 C# Parity**:
   - Full adherence to `OverlayTheme.cs` styles (translucent frosted slate `#7CEEF2F6`, subtle border `#2064748B`, black titles `#000000`, label text `#0F172A`, stale/muted text `#475569`).
   - Linear color interpolation for progress bars from `#4B5563` (0.0) to `#111827` (1.0).
@@ -431,13 +418,11 @@ A lightweight HUD overlay based on pure **Win32 Layered Windows** and GDI+ rende
   - Memory (WorkingSet64): **~31 MB** (half of WPF's 66 MB, and 13x lighter than Wails' 389 MB).
   - Child Processes: **0** (no WebView2 / Chromium processes).
   - CPU (60s total): **~0.06s**.
-  - Binary Size: **7.35 MB** (pure Go static executable, no CGO or MinGW required).
-- **Build**:
-  ```bash
-  cd go
-  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -o dist/llm-limits-overlay32.exe ./cmd/overlay32
-  ```
+  - Binary Size: **7.4 MB** (pure Go static executable, no CGO or MinGW required).
 - **Verification on Windows**: Automated test via `go/verify-stage5.ps1` runs side-by-side with the C# overlay on identical data, checks white/dark backdrop MD5 divergence, performs a 60-second memory benchmark, and verifies `no_key`, `stale`, and 4-card dynamic height scaling.
+
+#### 7. Experimental Wails Overlay (Archived)
+An alternative Wails v2 (Go + WebView2) overlay lives in `go/cmd/overlay/`. While functional, it requires MinGW (`CGO_ENABLED=1`) and consumes ~389 MB WorkingSet due to Chromium processes. The pure Win32 layered window engine is chosen as the official v2.0.0 GUI.
 
 ---
 
