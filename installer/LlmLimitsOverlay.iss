@@ -1,12 +1,12 @@
 ; LlmLimitsOverlay Inno Setup Script
 ; Build: ISCC.exe LlmLimitsOverlay.iss
-; Output: dist/LlmLimitsOverlay-Setup-1.4.1.exe
+; Output: dist/LlmLimitsOverlay-Setup-2.0.0.exe
 
 #define MyAppName "LLM Limits Overlay"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Kzamirtay"
 #define MyAppURL "https://github.com/Kzamirtay/llm-limits-overlay"
-#define MyAppExeName "LlmLimitsOverlay.exe"
+#define MyAppExeName "llm-limits-overlay.exe"
 #define MyAppId "{{8F3E7C2A-4B1D-4E9A-8C5F-2D6B9A1E4F7C}"
 
 [Setup]
@@ -45,8 +45,8 @@ Name: "autostart"; Description: "Автозапуск при входе в Windo
 Name: "addtopath"; Description: "Добавить llm-limits.exe в PATH пользователя (запуск из любой папки)"; GroupDescription: "Параметры командной строки:";
 
 [Files]
-Source: "..\dotnet\bin\LlmLimitsOverlay.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dotnet\bin\llm-limits.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\go\dist\llm-limits-overlay.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\go\dist\llm-limits.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\overlay.config.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\assets\app.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -69,7 +69,8 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 [UninstallDelete]
 ; Удаляем data-файлы, но не .env
 Type: files; Name: "{app}\limits*.json"
-Type: files; Name: "{app}\overlay.log"
+Type: files; Name: "{app}\overlay*.log"
+Type: files; Name: "{app}\window.pos.json"
 
 [Code]
 // ---- User PATH management for CLI (addtopath task) --------------------

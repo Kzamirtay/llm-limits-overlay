@@ -271,15 +271,37 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ---
 
+## Архитектура и сравнение потребления памяти
+
+Начиная с версии **2.0.0**, основным стеком проекта является чистый **Go** (`CGO_ENABLED=0`):
+- **GUI-оверлей (`llm-limits-overlay.exe`)**: легковесный Always-on-Top HUD на чистом Win32 Layered Windows (`UpdateLayeredWindow` + 32-битный premultiplied ARGB DIB) и GDI+ (`gdiplus.dll`). Не требует WebView2, Chromium или внешних библиотек.
+- **CLI (`llm-limits.exe` / `llm-limits-linux-x64`)**: автономная статическая консольная утилита с нулевыми внешними зависимостями.
+- **C# / .NET Эталон (`dotnet/`)**: оригинальная реализация на C# / WPF сохранена в проекте как эталон и benchmark-образец (релизы ≤ 1.4.1).
+
+### Сравнение потребления ресурсов и памяти
+
+Замеры производились во время активных 60-секундных циклов опроса на Windows 11 (64-bit):
+
+| Реализация | Стек | Память (WorkingSet64) | Дочерние процессы | Размер бинарника | Статус в v2.0.0 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Go Win32 Native** | Go (`CGO_ENABLED=0`) + Win32 / GDI+ | **~31 МБ** | **0** | **7.4 МБ** | **Основной стек (v2.0.0+)** |
+| **C# / WPF** | C# (.NET Framework 4.8 / WPF) | **~66 МБ** | **0** | ~130 КБ (+ .NET 4.8) | Эталон / benchmark (≤ 1.4.1) |
+| **Wails v2** | Go + WebKit / WebView2 | **~389 МБ** | 4–6 (Chromium) | ~12 МБ (+ WebView2) | Экспериментальный |
+
+---
+
 ## Установка и запуск
 
-Единственный способ запуска оверлея — исполняемый файл **`LlmLimitsOverlay.exe`**.
+Основной исполняемый файл оверлея в версии 2.0.0+ — **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
-> **PowerShell-версия удалена из master; она доступна в теге/релизе [v1.0.0](https://github.com/Kzamirtay/llm-limits-overlay/releases/tag/v1.0.0).** Начиная с версии v1.1.0 оверлей работает исключительно как нативное C# GUI-приложение (.NET Framework 4.8 / WPF). С версии v1.2.0 Python и WSL больше не требуются.
+> **История версий**:
+> - **v2.0.0+**: Основной стек — чистый Go (нативный Win32 HUD + CLI). C#-версия сохранена в `dotnet/` как эталон.
+> - **v1.1.0–v1.4.1**: C# / .NET Framework 4.8 / WPF автономное приложение (`LlmLimitsOverlay.exe`).
+> - **v1.0.0**: Прототип на PowerShell (архивирован в git-теге `v1.0.0`).
 
 ### Требования к окружению для запуска
-Рядом с `LlmLimitsOverlay.exe` должны лежать следующие файлы:
+Рядом с `llm-limits-overlay.exe` должны лежать следующие файлы:
 - `assets/app.ico` — иконка приложения для окна и системного трея;
 - `overlay.config.json` — конфигурация (создаётся автоматически, если отсутствует);
 - `.env` — файл API-ключей (`OPENROUTER_API_KEY`, `KIMI_API_KEY`).
@@ -287,41 +309,52 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### Способы запуска
 
 #### 1. Запуск готового бинарника из Releases
-1. Скачайте последний архив `LlmLimitsOverlay-vX.Y.Z-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Скачайте архив `LlmLimitsOverlay-v2.0.0-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Распакуйте в любую удобную папку.
 3. Создайте `.env` с API-ключами (скопируйте из `.env.example`).
 4. Убедитесь, что `agy.exe` установлен и вы авторизованы (`agy auth login`).
-5. Запустите `LlmLimitsOverlay.exe` двойным кликом в проводнике Windows или из командной строки:
+5. Запустите `llm-limits-overlay.exe` двойным кликом в проводнике Windows или из командной строки:
    ```cmd
-   LlmLimitsOverlay.exe
+   llm-limits-overlay.exe
    ```
-   Приложение скомпилировано как подсистема Windows GUI (`/target:winexe`) и стартует бесшумно — без мигающих консольных окон CMD или вспомогательных лончеров.
+   Приложение скомпилировано как подсистема Windows GUI (`-H windowsgui`) и стартует бесшумно — без мигающих консольных окон CMD или вспомогательных лончеров.
 
-#### 2. Сборка из исходников
-Если вы клонировали репозиторий и хотите собрать бинарник самостоятельно:
+#### 2. Сборка из исходников (Go 2.0.0+)
+Для сборки Go GUI-оверлея и сопутствующего CLI из исходников:
+```bash
+cd go
+
+# Windows GUI Overlay (llm-limits-overlay.exe)
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -o dist/llm-limits-overlay.exe ./cmd/overlay32
+
+# Windows CLI (llm-limits.exe)
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limits.exe ./cmd/llm-limits
+
+# Linux CLI (llm-limits-linux-x64)
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limits-linux-x64 ./cmd/llm-limits
+```
+
+Для сборки эталонного C#-бинарника:
 ```cmd
 dotnet\build.cmd
 ```
-Скрипт автоматически находит системный `csc.exe` (`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`), не требует установки Visual Studio, MSBuild или .NET SDK, и компилирует автономный бинарник в:
-```
-dotnet\bin\LlmLimitsOverlay.exe
-```
-Подробная техническая документация и архитектура порта описаны в [dotnet/README.md](dotnet/README.md).
+Скрипт компилирует `dotnet\bin\LlmLimitsOverlay.exe` системным `csc.exe`. Подробности описаны в [dotnet/README.md](dotnet/README.md).
 
-#### 3. Windows-установщик (v1.2.0+)
-Доступен per-user установщик: `LlmLimitsOverlay-Setup-1.4.1.exe` (Inno Setup 6).
+#### 3. Windows-установщик (v2.0.0+)
+Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.0.0.exe` (Inno Setup 6).
 
 **Возможности:**
-- Устанавливается в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
-- Ярлык в меню Пуск (всегда); опционально — ярлык на Рабочем столе и автозапуск (HKCU Run).
-- Запись в «Приложения и компоненты» / «Программы и компоненты» для корректного удаления.
+- Устанавливает `llm-limits-overlay.exe` (GUI) и `llm-limits.exe` (CLI) в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
+- Создаёт ярлык в меню Пуск (всегда); опционально — ярлык на Рабочем столе и автозапуск (HKCU Run).
+- Добавляет `llm-limits.exe` в `PATH` пользователя (с чистым удалением при деинсталляции).
+- Регистрирует запись в «Приложения и компоненты» / «Программы и компоненты».
 - **Ваш `.env` сохраняется** при обновлении и удалении (`onlyifdoesntexist`, `uninsneveruninstall`).
 - Перед установкой/обновлением закрывает запущенный экземпляр оверлея из этой же папки.
-- При удалении удаляются файлы данных (`limits*.json`, `overlay.log`); `.env` остаётся.
+- Удаляет рабочие данные (`limits*.json`, `overlay.log`, `overlay32.log`, `window.pos.json`); `.env` остаётся.
 
 **Тихая установка (для автоматизации):**
 ```cmd
-LlmLimitsOverlay-Setup-1.4.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **Предупреждение SmartScreen**: установщик не подписан цифровой подписью (нет EV-сертификата). Windows SmartScreen покажет «Защита Windows» — нажмите «Подробнее» → «Всё равно запустить». Это нормально для open-source проектов без платного сертификата.
@@ -348,11 +381,11 @@ llm-limits --env .env --agy-bin C:\tools\agy.exe
 - `--no-color` и переменная окружения `NO_COLOR` отключают ANSI-цвета.
 - В режиме `--watch` при перенаправленном (не-TTY) выводе печатается блок за тик вместо перерисовки экрана.
 - Коды выхода: `0` — все провайдеры online; `2` — часть stale или без ключа (`no_key`); `1` — все недоступны или ошибка аргументов.
-- Если ключ API провайдера — плейсхолдер (не задан), его статус `no_key` — HTTP-запрос не выполняется, карточка показывает `нет ключа`. Заполните реальные ключи в файле `.env` рядом с `LlmLimitsOverlay.exe`.
+- Если ключ API провайдера — плейсхолдер (не задан), его статус `no_key` — HTTP-запрос не выполняется, карточка показывает `нет ключа`. Заполните реальные ключи в файле `.env` рядом с `llm-limits-overlay.exe`.
 - API-ключи и сырые label OpenRouter не печатаются (label маскируется, как в `limits.json`).
 
 #### 5. Linux CLI (`llm-limits-linux-x64`)
-В релизах поставляется self-contained сборка того же CLI для Linux (`llm-limits-linux-x64`) — .NET runtime встроен, ничего доустанавливать не нужно.
+Автономная статическая сборка того же CLI для Linux поставляется в релизах: `llm-limits-linux-x64` (~7 МБ, чистый Go, без внешнего рантайма).
 
 ```bash
 # скопируйте в пользовательский bin и сделайте исполняемым
@@ -360,6 +393,7 @@ mkdir -p ~/.local/bin
 cp llm-limits-linux-x64 ~/.local/bin/llm-limits
 chmod +x ~/.local/bin/llm-limits
 
+llm-limits --version
 llm-limits --json
 llm-limits --watch 30
 ```
@@ -367,12 +401,25 @@ llm-limits --watch 30
 - Ключи читаются из `.env` **рядом с бинарником** (либо `--env <путь>`).
 - Карточка Gemini/Claude требует нативный Linux-бинарник `agy`: ищется в `LLM_LIMITS_AGY_BIN`, затем `PATH`, затем `~/.local/bin/agy`, `/usr/local/bin/agy`. OAuth-токен читается из `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Остальное (Kimi, OpenRouter) работает без `agy`.
-- Бинарник релиза `llm-limits-linux-x64` — ~**16 МБ** (self-contained .NET 8, **trimmed**-публикация одним файлом — `PublishTrimmed=true`; без trimming ~67 МБ). Воспроизводимая сборка:
-  ```bash
-  dotnet/build-linux.sh   # или: dotnet publish dotnet/LlmLimitsCli.Linux -c Release -r linux-x64 \
-                          #   --self-contained true -p:PublishSingleFile=true \
-                          #   -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=true -o dist/linux
-  ```
+- **Примечание о GUI под Linux**: Нативный HUD-оверлей использует подсистему Win32 Layered Windows и GDI+ (`user32.dll`, `gdiplus.dll`) и работает только в Windows. Под Linux собрать GUI без cgo невозможно (Wails требует cgo и библиотеки WebKit2GTK / GTK3). Поэтому поддержка Linux официально осуществляется через автономный статический CLI `llm-limits-linux-x64`.
+
+#### 6. Архитектура Go Native GUI (Win32 Layered Window)
+GUI версии 2.0.0 (`llm-limits-overlay.exe`) реализован на чистом Go (`go/cmd/overlay32`) без cgo:
+- **Стек**: Чистый Go (сборка с `CGO_ENABLED=0`), `UpdateLayeredWindow` с 32-битным DIB-буфером (BGRA, premultiplied alpha), GDI+ для скруглений и типографики, `fyne.io/systray` для трея, Win32 API (`RegisterHotKey`, `HTCAPTION` для drag).
+- **1:1 соответствие C#**:
+  - Точный перенос всех стилей и констант из `OverlayTheme.cs` (полупрозрачный матовый фон `#7CEEF2F6`, тонкий бордюр `#2064748B`, черные заголовки `#000000`, текст `#0F172A`, статус `#475569`).
+  - Линейная интерполяция цвета бара от `#4B5563` (0.0) до `#111827` (1.0).
+  - Динамическая высота окна по числу карточек в `overlay.config.json` (3 карточки = 402px, 4 карточки = 499px).
+  - Поддержка `no_key`, `stale`, per-card таймингов и нескольких ключей одного провайдера.
+- **Потребление ресурсов**:
+  - Память (WorkingSet64): **~31 МБ** (в 2 раза меньше, чем у WPF 66 МБ, и в 13 раз меньше, чем у Wails 389 МБ).
+  - Дочерние процессы: **0** (нет процессов WebView2 / Chromium).
+  - CPU за 60с: **~0.06с**.
+  - Размер exe: **7.4 МБ** (чистый Go без cgo).
+- **Проверка на Windows**: Автоматизированный скрипт `go/verify-stage5.ps1` проводит сквозную приёмку: попиксельное совпадение с C#-оверлеем на одних данных (`stage5-cs.png` vs `stage5-go.png`), замер прозрачности на белой и тёмной подложке, 60-секундный бенчмарк памяти.
+
+#### 7. Экспериментальный оверлей на Wails (Архив)
+Альтернативная версия на Wails v2 (Go + WebView2) находится в `go/cmd/overlay/`. Она полностью функциональна, однако требует MinGW (`CGO_ENABLED=1`) и расходует ~389 МБ RAM из-за процессов Chromium. В качестве официального GUI версии 2.0.0 выбран чистый Win32 Layered Window.
 
 ---
 

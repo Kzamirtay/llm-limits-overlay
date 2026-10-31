@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>LLM Limits Overlay</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow: hidden;
+    width: 290px;
+    --wails-draggable: drag;
+    -webkit-app-region: drag;
+  }
+
+  #root {
+    padding: 6px 6px 12px;
+    width: 290px;
+  }
+
+  .card {
+    background: rgba(30, 41, 59, 0.70);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    --wails-draggable: drag;
+    -webkit-app-region: drag;
+  }
+  .card:last-child { margin-bottom: 0; }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .title-group {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .t-kimi { color: #10b981; }
+  .t-or { color: #a78bfa; }
+  .t-gem { color: #60a5fa; }
+  .t-cla { color: #f59e0b; }
+
+  .updated {
+    font-size: 10px;
+    color: #94a3b8;
+    white-space: nowrap;
+  }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin: 1px 0 2px;
+  }
+  .meta {
+    font-size: 10px;
+    color: #94a3b8;
+    font-weight: 400;
+  }
+  .meta.balance {
+    color: #cbd5e1;
+  }
+
+  .bar {
+    height: 5.5px;
+    border-radius: 2.5px;
+    background: rgba(148, 163, 184, 0.22);
+    overflow: hidden;
+    margin-bottom: 7px;
+  }
+  .bar > div {
+    height: 100%;
+    border-radius: 2.5px;
+    background: linear-gradient(90deg, #64748b, #cbd5e1);
+  }
+  .bar.last { margin-bottom: 2px; }
+
+  .divider {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.20);
+    margin: 6px 0 7px;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+// ==========================================
+// Константы локализации и форматирования UI
+// (единая точка редактирования)
+// ==========================================
+const STRINGS = {
+  JUST_NOW: "только что",
+  MINUTES_SUFFIX: " мин",
+  HOURS_SUFFIX: "ч",
+  MINUTES_SHORT: "м",
+  STALE_SUFFIX: " (stale)",
+  NO_KEY: "нет ключа",
+  NO_DATA: "нет данных",
+  OUTDATED: "устарело",
+  DEFAULT_KIMI_TITLE: "KIMI",
+  DEFAULT_OPENROUTER_TITLE: "OPENROUTER",
+  DEFAULT_AGY_TITLE: "GEMINI + CLAUDE/GPT",
+  GEMINI_SUBTITLE: "GEMINI",
+  CLAUDE_SUBTITLE: "CLAUDE/GPT"
+};
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function parseIso(isoStr) {
+  if (!isoStr) return null;
+  // Обработка форматов: YYYY-MM-DD HH:mm:ss или ISO8601
+  let s = isoStr.trim();
+  if (s.indexOf('T') === -1 && s.indexOf(' ') !== -1) {
+    s = s.replace(' ', 'T');
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatRelativeTime(isoStr, status) {
+  if (status === "no_key") {
+    return STRINGS.NO_KEY;
+  }
+  const date = parseIso(isoStr);
+  if (!date) {
+    return status === "stale" ? STRINGS.OUTDATED : STRINGS.NO_DATA;
+  }
+  const diffMs = Date.now() - date.getTime();
+  const totalMins = Math.max(0, Math.floor(diffMs / 60000));
+  let baseText = "";
+  if (totalMins < 1) {
+    baseText = STRINGS.JUST_NOW;
+  } else if (totalMins < 60) {
+    baseText = totalMins + STRINGS.MINUTES_SUFFIX;
+  } else {
+    const hrs = Math.floor(totalMins / 60);
+    const mins = totalMins % 60;
+    baseText = mins > 0 ? (hrs + STRINGS.HOURS_SUFFIX + " " + mins + STRINGS.MINUTES_SHORT) : (hrs + STRINGS.HOURS_SUFFIX);
+  }
+  if (status === "stale") {
+    baseText += STRINGS.STALE_SUFFIX;
+  }
+  return baseText;
+}
+
+function formatPercent(pct, frac) {
+  if (frac !== undefined && frac !== null) {
+    if (frac >= 0.9995) return "100%";
+    if (frac <= 0.0005) return "0%";
+  }
+  if (pct === undefined || pct === null || isNaN(pct)) return "0%";
+  if (pct >= 99.95) return "100%";
+  if (pct <= 0.05) return "0%";
+  return pct.toFixed(1) + "%";
+}
+
+function getBarWidth(pct, frac) {
+  let val = pct;
+  if (val === undefined || isNaN(val)) {
+    val = (frac !== undefined && !isNaN(frac)) ? (frac * 100.0) : 0;
+  }
+  if (val < 0) val = 0;
+  if (val > 100) val = 100;
+  return val.toFixed(1) + "%";
+}
+
+function renderPayload(payload) {
+  if (!payload || !payload.providers) return;
+  const root = document.getElementById("root");
+  let html = "";
+
+  for (const p of payload.providers) {
+    const updatedStr = formatRelativeTime(p.last_updated, p.status);
+
+    if (p.type === "kimi") {
+      const u7d = p.limit_7d || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      const u5h = p.limit_5h || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      html += `
+        <div class="card" id="card-${escapeHtml(p.id)}" data-last-updated="${escapeHtml(p.last_updated || '')}" data-status="${escapeHtml(p.status || '')}">
+          <div class="header">
+            <span class="title t-kimi">${escapeHtml(p.title || STRINGS.DEFAULT_KIMI_TITLE)}</span>
+            <span class="updated">${escapeHtml(updatedStr)}</span>
+          </div>
+          <div class="row">
+            <span class="meta">${escapeHtml(u7d.reset_in || "")}</span>
+            <span>${formatPercent(u7d.used_percent, u7d.used_fraction)}</span>
+          </div>
+          <div class="bar"><div style="width:${getBarWidth(u7d.used_percent, u7d.used_fraction)}"></div></div>
+          <div class="row">
+            <span class="meta">${escapeHtml(u5h.reset_in || "")}</span>
+            <span>${formatPercent(u5h.used_percent, u5h.used_fraction)}</span>
+          </div>
+          <div class="bar last"><div style="width:${getBarWidth(u5h.used_percent, u5h.used_fraction)}"></div></div>
+        </div>
+      `;
+    } else if (p.type === "openrouter") {
+      const main = p.main_limit || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      const free = p.free_daily || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      html += `
+        <div class="card" id="card-${escapeHtml(p.id)}" data-last-updated="${escapeHtml(p.last_updated || '')}" data-status="${escapeHtml(p.status || '')}">
+          <div class="header">
+            <span class="title-group">
+              <span class="title t-or">${escapeHtml(p.title || STRINGS.DEFAULT_OPENROUTER_TITLE)}</span>
+              ${p.balance ? `<span class="meta balance">${escapeHtml(p.balance)}</span>` : ""}
+            </span>
+            <span class="updated">${escapeHtml(updatedStr)}</span>
+          </div>
+          <div class="row">
+            <span class="meta">${escapeHtml(main.reset_in || "")}</span>
+            <span>${formatPercent(main.used_percent, main.used_fraction)}</span>
+          </div>
+          <div class="bar"><div style="width:${getBarWidth(main.used_percent, main.used_fraction)}"></div></div>
+          <div class="row">
+            <span class="meta">${escapeHtml(p.free_label || "")}</span>
+            <span>${formatPercent(free.used_percent, free.used_fraction)}</span>
+          </div>
+          <div class="bar last"><div style="width:${getBarWidth(free.used_percent, free.used_fraction)}"></div></div>
+        </div>
+      `;
+    } else if (p.type === "agy") {
+      const gw = p.gemini_weekly || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      const g5 = p.gemini_5h || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      const cw = p.claude_weekly || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      const c5 = p.claude_5h || { used_percent: 0, used_fraction: 0, reset_in: "" };
+      html += `
+        <div class="card" id="card-${escapeHtml(p.id)}" data-last-updated="${escapeHtml(p.last_updated || '')}" data-status="${escapeHtml(p.status || '')}">
+          <div class="header">
+            <span class="title t-gem">${STRINGS.GEMINI_SUBTITLE}</span>
+            <span class="updated">${escapeHtml(updatedStr)}</span>
+          </div>
+          <div class="row">
+            <span class="meta">${escapeHtml(gw.reset_in || "")}</span>
+            <span>${formatPercent(gw.used_percent, gw.used_fraction)}</span>
+          </div>
+          <div class="bar"><div style="width:${getBarWidth(gw.used_percent, gw.used_fraction)}"></div></div>
+          <div class="row">
+            <span class="meta">${escapeHtml(g5.reset_in || "")}</span>
+            <span>${formatPercent(g5.used_percent, g5.used_fraction)}</span>
+          </div>
+          <div class="bar"><div style="width:${getBarWidth(g5.used_percent, g5.used_fraction)}"></div></div>
+          <div class="divider"></div>
+          <div class="header">
+            <span class="title t-cla">${STRINGS.CLAUDE_SUBTITLE}</span>
+          </div>
+          <div class="row">
+            <span class="meta">${escapeHtml(cw.reset_in || "")}</span>
+            <span>${formatPercent(cw.used_percent, cw.used_fraction)}</span>
+          </div>
+          <div class="bar"><div style="width:${getBarWidth(cw.used_percent, cw.used_fraction)}"></div></div>
+          <div class="row">
+            <span class="meta">${escapeHtml(c5.reset_in || "")}</span>
+            <span>${formatPercent(c5.used_percent, c5.used_fraction)}</span>
+          </div>
+          <div class="bar last"><div style="width:${getBarWidth(c5.used_percent, c5.used_fraction)}"></div></div>
+        </div>
+      `;
+    }
+  }
+
+  root.innerHTML = html;
+
+  // Динамическая подгонка высоты окна под контент
+  requestAnimationFrame(() => {
+    const h = root.offsetHeight;
+    if (h > 100 && window.runtime && window.runtime.EventsEmit) {
+      window.runtime.EventsEmit("resize-window", h);
+    }
+  });
+}
+
+// Периодическое обновление текстового возраста данных (каждые 10с)
+setInterval(() => {
+  document.querySelectorAll(".card").forEach(card => {
+    const updatedEl = card.querySelector(".updated");
+    if (updatedEl) {
+      const iso = card.getAttribute("data-last-updated");
+      const status = card.getAttribute("data-status");
+      updatedEl.textContent = formatRelativeTime(iso, status);
+    }
+  });
+}, 10000);
+
+// Инициализация Wails runtime событий
+window.addEventListener("DOMContentLoaded", () => {
+  if (window.runtime && window.runtime.EventsOn) {
+    window.runtime.EventsOn("quota-update", (data) => {
+      renderPayload(data);
+    });
+    window.runtime.EventsEmit("ui-ready");
+  }
+});
+</script>
+</body>
+</html>
