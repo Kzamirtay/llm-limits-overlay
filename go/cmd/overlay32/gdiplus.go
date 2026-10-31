@@ -67,12 +67,17 @@ var (
 	procSetWindowPos        = user32.NewProc("SetWindowPos")
 	procGetWindowRect       = user32.NewProc("GetWindowRect")
 	procUpdateLayeredWindow = user32.NewProc("UpdateLayeredWindow")
-	procRegisterHotKey      = user32.NewProc("RegisterHotKey")
-	procUnregisterHotKey    = user32.NewProc("UnregisterHotKey")
-	procGetSystemMetrics    = user32.NewProc("GetSystemMetrics")
+	procRegisterHotKey        = user32.NewProc("RegisterHotKey")
+	procUnregisterHotKey      = user32.NewProc("UnregisterHotKey")
+	procGetSystemMetrics      = user32.NewProc("GetSystemMetrics")
+	procSystemParametersInfoW = user32.NewProc("SystemParametersInfoW")
 
 	// Kernel32
 	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
+)
+
+const (
+	SPI_GETWORKAREA = 0x0030
 )
 
 type GdiplusStartupInput struct {

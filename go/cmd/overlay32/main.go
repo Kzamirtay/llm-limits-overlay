@@ -25,6 +25,10 @@ const (
 	windowWidth     = 290
 	defaultHeight   = 402
 
+	// Отступы оверлея от края рабочей области (work area)
+	defaultMarginRight  = 12
+	defaultMarginBottom = 12
+
 	ERROR_ALREADY_EXISTS = 183
 )
 
@@ -80,25 +84,93 @@ func checkSingleInstance() (uintptr, bool) {
 	return hMutex, true
 }
 
+// getWorkArea возвращает рабочую область основного экрана (без панели задач)
+func getWorkArea() RECT {
+	var rc RECT
+	r, _, _ := procSystemParametersInfoW.Call(
+		uintptr(SPI_GETWORKAREA),
+		0,
+		uintptr(unsafe.Pointer(&rc)),
+		0,
+	)
+	if r != 0 && (rc.Right > rc.Left) && (rc.Bottom > rc.Top) {
+		return rc
+	}
+	// Фолбэк на SM_CXSCREEN / SM_CYSCREEN, если SystemParametersInfoW вернул ошибку
+	rW, _, _ := procGetSystemMetrics.Call(0)
+	rH, _, _ := procGetSystemMetrics.Call(1)
+	return RECT{
+		Left:   0,
+		Top:    0,
+		Right:  int32(rW),
+		Bottom: int32(rH),
+	}
+}
+
+// getDefaultPosition вычисляет стартовые координаты окна в правом нижнем углу рабочей области с отступами
+func getDefaultPosition(h int32, wa RECT) (int32, int32) {
+	x := wa.Right - windowWidth - defaultMarginRight
+	y := wa.Bottom - h - defaultMarginBottom
+	return x, y
+}
+
+// clampWindowPosition проверяет, находится ли окно полностью внутри рабочей области.
+// Если позиция валидна — возвращает её без изменений.
+// Если выходит за границы — клампит в рабочую область с учетом отступов.
+func clampWindowPosition(x, y, w, h int32, wa RECT) (int32, int32) {
+	// Валидная позиция: окно целиком помещается внутри рабочей области
+	isValid := x >= wa.Left && (x+w) <= wa.Right && y >= wa.Top && (y+h) <= wa.Bottom
+	if isValid {
+		return x, y
+	}
+
+	minX := wa.Left + defaultMarginRight
+	maxX := wa.Right - w - defaultMarginRight
+	minY := wa.Top + defaultMarginBottom
+	maxY := wa.Bottom - h - defaultMarginBottom
+
+	if maxX < minX {
+		maxX = minX
+	}
+	if maxY < minY {
+		maxY = minY
+	}
+
+	if x < minX {
+		x = minX
+	} else if x > maxX {
+		x = maxX
+	}
+
+	if y < minY {
+		y = minY
+	} else if y > maxY {
+		y = maxY
+	}
+
+	return x, y
+}
+
 func loadWindowPosition(h int32) (int32, int32) {
+	wa := getWorkArea()
 	posPath := filepath.Join(appDir, "window.pos.json")
 	raw, err := os.ReadFile(posPath)
 	if err == nil {
 		var pos WindowPosition
 		if json.Unmarshal(raw, &pos) == nil && (pos.X != 0 || pos.Y != 0) {
 			isUserPositioned = true
-			return int32(pos.X), int32(pos.Y)
+			clampedX, clampedY := clampWindowPosition(int32(pos.X), int32(pos.Y), windowWidth, h, wa)
+			if clampedX != int32(pos.X) || clampedY != int32(pos.Y) {
+				fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] saved position (%d, %d) clamped to work area (%d, %d) [workArea: Left=%d Top=%d Right=%d Bottom=%d]", pos.X, pos.Y, clampedX, clampedY, wa.Left, wa.Top, wa.Right, wa.Bottom))
+				saveWindowPosition(clampedX, clampedY)
+			}
+			return clampedX, clampedY
 		}
 	}
 
 	isUserPositioned = false
-	// Дефолт: правый-нижний угол основного экрана (MarginRight=14, MarginBottom=4)
-	rW, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
-	rH, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
-	w := int32(rW)
-	scrH := int32(rH)
-	x := w - windowWidth - 14
-	y := scrH - h - 4
+	x, y := getDefaultPosition(h, wa)
+	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] initial default position (%d, %d) [workArea: Left=%d Top=%d Right=%d Bottom=%d]", x, y, wa.Left, wa.Top, wa.Right, wa.Bottom))
 	return x, y
 }
 
@@ -159,11 +231,10 @@ func toggleVisibility() {
 
 func resetPosition() {
 	isUserPositioned = false
-	rW, _, _ := procGetSystemMetrics.Call(0)
-	rH, _, _ := procGetSystemMetrics.Call(1)
-	posX = int32(rW) - windowWidth - 14
-	posY = int32(rH) - currentHeight - 4
+	wa := getWorkArea()
+	posX, posY = getDefaultPosition(currentHeight, wa)
 	saveWindowPosition(posX, posY)
+	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] reset position to (%d, %d) [workArea: Left=%d Top=%d Right=%d Bottom=%d]", posX, posY, wa.Left, wa.Top, wa.Right, wa.Bottom))
 	if mainHWND != 0 {
 		procSetWindowPos.Call(mainHWND, 0, uintptr(posX), uintptr(posY), uintptr(windowWidth), uintptr(currentHeight), uintptr(SWP_NOZORDER|SWP_NOACTIVATE))
 		requestRender()
@@ -177,13 +248,12 @@ func applyWindowHeight(hwnd uintptr, newH int32) {
 	oldH := currentHeight
 	currentHeight = newH
 
+	wa := getWorkArea()
 	if !isUserPositioned {
-		rW, _, _ := procGetSystemMetrics.Call(0)
-		rH, _, _ := procGetSystemMetrics.Call(1)
-		posX = int32(rW) - windowWidth - 14
-		posY = int32(rH) - newH - 4
+		posX, posY = getDefaultPosition(newH, wa)
 	} else {
 		posY = posY - (newH - oldH)
+		posX, posY = clampWindowPosition(posX, posY, windowWidth, newH, wa)
 	}
 
 	if renderer != nil {
