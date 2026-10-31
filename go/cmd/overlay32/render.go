@@ -8,10 +8,42 @@ import (
 	"unsafe"
 
 	"llmlimits/internal/config"
-	"llmlimits/internal/fetchers"
 	"llmlimits/internal/model"
 
 	"golang.org/x/sys/windows"
+)
+
+// Constants from OverlayTheme.cs
+const (
+	podCornerRadius = float32(8.0)
+	barHeight       = float32(5.5)
+	barCornerRadius = float32(2.5)
+)
+
+var (
+	// ~49% translucent frosted slate: Color.FromArgb(0x7C, 0xEE, 0xF2, 0xF6)
+	colorPodBg = argb(124, 238, 242, 246)
+	// ~12% subtle border: Color.FromArgb(0x20, 0x64, 0x74, 0x8B)
+	colorPodBorder = argb(32, 100, 116, 139)
+	// Subtle pod shadow
+	colorPodShadow = argb(15, 0, 0, 0)
+
+	// Headers: TitleTextColor, GeminiHeaderColor, ClaudeHeaderColor, OpenRouterHeaderColor, KimiHeaderColor = Colors.Black
+	colorHeader = argb(255, 0, 0, 0)
+
+	// LabelTextColor, PercentTextColor, MetaTextColor = #0F172A
+	colorLabel = argb(255, 15, 23, 42)
+	// PercentText100Color = Colors.Black
+	colorPercent100 = argb(255, 0, 0, 0)
+
+	// MetaTextMutedColor, UpdatedStaleTextColor = #475569
+	colorMetaStale = argb(255, 71, 85, 105)
+
+	// BarTrackBackgroundColor = Color.FromArgb(0x22, 0x00, 0x00, 0x00) (~13.3% alpha black)
+	colorBarTrack = argb(34, 0, 0, 0)
+
+	// DividerBrush = Color.FromArgb(0x18, 0, 0, 0)
+	colorDivider = argb(24, 0, 0, 0)
 )
 
 type Renderer struct {
@@ -24,12 +56,13 @@ type Renderer struct {
 	gpBitmap uintptr
 	graphics uintptr
 
-	family     uintptr
-	fontTitle  uintptr // 11px Bold
-	fontText   uintptr // 10px Regular
-	fontSub    uintptr // 9px Regular
-	fmtNear    uintptr
-	fmtFar     uintptr
+	family      uintptr
+	fontTitle   uintptr // 11px Bold
+	fontRow     uintptr // 11.5px Regular
+	fontRowBold uintptr // 11.5px Bold
+	fontMeta    uintptr // 10px Regular
+	fmtNear     uintptr
+	fmtFar      uintptr
 }
 
 func NewRenderer(w, h int32) (*Renderer, error) {
@@ -86,10 +119,11 @@ func NewRenderer(w, h int32) (*Renderer, error) {
 	fontName, _ := windows.UTF16PtrFromString("Segoe UI")
 	procGdipCreateFontFamilyFromName.Call(uintptr(unsafe.Pointer(fontName)), 0, uintptr(unsafe.Pointer(&family)))
 
-	var fontTitle, fontText, fontSub uintptr
-	procGdipCreateFont.Call(family, fbits(11.0), 1, UnitPixel, uintptr(unsafe.Pointer(&fontTitle))) // 11px Bold
-	procGdipCreateFont.Call(family, fbits(10.0), 0, UnitPixel, uintptr(unsafe.Pointer(&fontText)))  // 10px Regular
-	procGdipCreateFont.Call(family, fbits(9.0), 0, UnitPixel, uintptr(unsafe.Pointer(&fontSub)))   // 9px Regular
+	var fontTitle, fontRow, fontRowBold, fontMeta uintptr
+	procGdipCreateFont.Call(family, fbits(11.0), 1, UnitPixel, uintptr(unsafe.Pointer(&fontTitle)))   // 11px Bold
+	procGdipCreateFont.Call(family, fbits(11.5), 0, UnitPixel, uintptr(unsafe.Pointer(&fontRow)))     // 11.5px Regular
+	procGdipCreateFont.Call(family, fbits(11.5), 1, UnitPixel, uintptr(unsafe.Pointer(&fontRowBold))) // 11.5px Bold
+	procGdipCreateFont.Call(family, fbits(10.0), 0, UnitPixel, uintptr(unsafe.Pointer(&fontMeta)))    // 10px Regular
 
 	var fmtNear, fmtFar uintptr
 	procGdipCreateStringFormat.Call(0, 0, uintptr(unsafe.Pointer(&fmtNear)))
@@ -97,19 +131,20 @@ func NewRenderer(w, h int32) (*Renderer, error) {
 	procGdipSetStringFormatAlign.Call(fmtFar, 2) // Far = Right
 
 	return &Renderer{
-		width:      w,
-		height:     h,
-		memDC:      memDC,
-		hbmp:       hbmp,
-		bits:       bits,
-		gpBitmap:   gpBitmap,
-		graphics:   g,
-		family:     family,
-		fontTitle:  fontTitle,
-		fontText:   fontText,
-		fontSub:    fontSub,
-		fmtNear:    fmtNear,
-		fmtFar:     fmtFar,
+		width:       w,
+		height:      h,
+		memDC:       memDC,
+		hbmp:        hbmp,
+		bits:        bits,
+		gpBitmap:    gpBitmap,
+		graphics:    g,
+		family:      family,
+		fontTitle:   fontTitle,
+		fontRow:     fontRow,
+		fontRowBold: fontRowBold,
+		fontMeta:    fontMeta,
+		fmtNear:     fmtNear,
+		fmtFar:      fmtFar,
 	}, nil
 }
 
@@ -123,11 +158,14 @@ func (r *Renderer) Destroy() {
 	if r.fontTitle != 0 {
 		procGdipDeleteFont.Call(r.fontTitle)
 	}
-	if r.fontText != 0 {
-		procGdipDeleteFont.Call(r.fontText)
+	if r.fontRow != 0 {
+		procGdipDeleteFont.Call(r.fontRow)
 	}
-	if r.fontSub != 0 {
-		procGdipDeleteFont.Call(r.fontSub)
+	if r.fontRowBold != 0 {
+		procGdipDeleteFont.Call(r.fontRowBold)
+	}
+	if r.fontMeta != 0 {
+		procGdipDeleteFont.Call(r.fontMeta)
 	}
 	if r.family != 0 {
 		procGdipDeleteFontFamily.Call(r.family)
@@ -202,11 +240,35 @@ func (r *Renderer) drawRoundedRect(x, y, w, h, radius float32, fillArgb, strokeA
 	procGdipDeletePath.Call(path)
 }
 
-func (r *Renderer) drawProgressBar(x, y, w, h float32, usedFraction float64, level string) {
-	trackColor := argb(20, 255, 255, 255) // rgba(255,255,255,0.08)
-	r.drawRoundedRect(x, y, w, h, h/2, trackColor, 0)
+func (r *Renderer) drawCardBackground(x, y, w, h float32) {
+	// Subtle drop shadow shifted by 1px
+	r.drawRoundedRect(x, y+1, w, h, podCornerRadius, colorPodShadow, 0)
+	// Pod frosted slate background + border
+	r.drawRoundedRect(x, y, w, h, podCornerRadius, colorPodBg, colorPodBorder)
+}
 
-	if usedFraction <= 0 {
+// getProgressColor — линейная интерполяция между #4B5563 (used=0.0) и #111827 (used=1.0)
+// Полностью соответствует GetProgressBrush в OverlayTheme.cs
+func getProgressColor(usedFraction float64) uint32 {
+	if math.IsNaN(usedFraction) || usedFraction < 0.0 {
+		usedFraction = 0.0
+	}
+	if usedFraction > 1.0 {
+		usedFraction = 1.0
+	}
+	r1, g1, b1 := 75.0, 85.0, 99.0
+	r2, g2, b2 := 17.0, 24.0, 39.0
+	r := byte(math.Round(r1 + (r2-r1)*usedFraction))
+	g := byte(math.Round(g1 + (g2-g1)*usedFraction))
+	b := byte(math.Round(b1 + (b2-b1)*usedFraction))
+	return argb(255, r, g, b)
+}
+
+func (r *Renderer) drawProgressBar(x, y, w, h float32, usedFraction float64) {
+	// Трек бара: rgba(0, 0, 0, 0.133)
+	r.drawRoundedRect(x, y, w, h, barCornerRadius, colorBarTrack, 0)
+
+	if math.IsNaN(usedFraction) || usedFraction <= 0.0 {
 		return
 	}
 	if usedFraction > 1.0 {
@@ -216,17 +278,8 @@ func (r *Renderer) drawProgressBar(x, y, w, h float32, usedFraction float64, lev
 	if fillW < h {
 		fillW = h
 	}
-
-	fillColor := argb(255, 16, 185, 129) // Emerald default
-	if level == "critical" || usedFraction >= 0.95 {
-		fillColor = argb(255, 239, 68, 68) // Red
-	} else if level == "warning" || usedFraction >= 0.80 {
-		fillColor = argb(255, 245, 158, 11) // Amber
-	} else {
-		fillColor = argb(255, 56, 189, 248) // Sky blue
-	}
-
-	r.drawRoundedRect(x, y, fillW, h, h/2, fillColor, 0)
+	fillColor := getProgressColor(usedFraction)
+	r.drawRoundedRect(x, y, fillW, h, barCornerRadius, fillColor, 0)
 }
 
 func (r *Renderer) drawString(text string, x, y, w, h float32, font uintptr, color uint32, alignFar bool) {
@@ -250,262 +303,403 @@ func (r *Renderer) drawString(text string, x, y, w, h float32, font uintptr, col
 	procGdipDeleteBrush.Call(brush)
 }
 
-func formatRuTimeDiff(diff string) string {
-	if diff == "" || diff == "--" || diff == "N/A" {
-		return "--"
-	}
-	s := strings.ReplaceAll(diff, "d", "д")
-	s = strings.ReplaceAll(s, "h", "ч")
-	s = strings.ReplaceAll(s, "m", "м")
-	return s
+func (r *Renderer) measureStringWidth(text string, font uintptr) float32 {
+	strPtr, _ := windows.UTF16PtrFromString(text)
+	rect := RectF{X: 0, Y: 0, Width: 1000, Height: 50}
+	var bbox RectF
+	procGdipMeasureString.Call(
+		r.graphics,
+		uintptr(unsafe.Pointer(strPtr)),
+		uintptr(^uintptr(0)),
+		font,
+		uintptr(unsafe.Pointer(&rect)),
+		r.fmtNear,
+		uintptr(unsafe.Pointer(&bbox)),
+		0, 0,
+	)
+	return bbox.Width
 }
 
-func getRelativeTimeString(updatedIso, status string) string {
+// formatResetTimeLabel — 1:1 аналог FormatResetTimeLabel из OverlayTheme.cs
+func formatResetTimeLabel(resetIn string) string {
+	if resetIn == "" || resetIn == "--" || resetIn == "N/A" {
+		return "--"
+	}
+	if resetIn == "ready" {
+		return "готов"
+	}
+	ru := strings.ReplaceAll(resetIn, "d", "д ")
+	ru = strings.ReplaceAll(ru, "h", "ч ")
+	ru = strings.ReplaceAll(ru, "m", "м")
+	return strings.TrimSpace(ru)
+}
+
+// getRelativeTimeString — 1:1 аналог GetRelativeTimeText и UpdateCardUpdatedLine из C#
+func getRelativeTimeString(updatedIso, status string) (string, uint32) {
 	if status == "no_key" {
-		return "нет ключа"
+		return "нет ключа", colorLabel
 	}
-	if status == "error" && updatedIso == "" {
-		return "ошибка"
-	}
+	isStale := (status == "stale")
 	if updatedIso == "" {
-		return "нет данных"
+		if isStale {
+			return "устарело", colorMetaStale
+		}
+		return "нет данных", colorLabel
 	}
 
-	t, err := time.Parse("2006-01-02 15:04:05", updatedIso)
+	formats := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		time.RFC3339,
+		"2006/01/02 15:04:05",
+	}
+	var t time.Time
+	var err error
+	for _, f := range formats {
+		t, err = time.Parse(f, updatedIso)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
-		t, err = time.Parse(time.RFC3339, updatedIso)
-	}
-	if err != nil {
-		return "только что"
-	}
-
-	mins := int(time.Since(t).Minutes())
-	if mins < 0 {
-		mins = 0
+		if isStale {
+			return "устарело", colorMetaStale
+		}
+		return "обновлено", colorLabel
 	}
 
-	var base string
-	if mins == 0 {
-		base = "только что"
-	} else if mins < 60 {
-		base = fmt.Sprintf("%d мин", mins)
+	diff := time.Since(t)
+	totalMinutes := int(math.Floor(diff.Minutes()))
+	if totalMinutes < 0 {
+		totalMinutes = 0
+	}
+
+	var baseText string
+	if totalMinutes < 1 {
+		baseText = "только что"
+	} else if totalMinutes < 60 {
+		baseText = fmt.Sprintf("%d мин", totalMinutes)
 	} else {
-		base = fmt.Sprintf("%dч", mins/60)
+		hrs := totalMinutes / 60
+		mins := totalMinutes % 60
+		if mins > 0 {
+			baseText = fmt.Sprintf("%dч %dм", hrs, mins)
+		} else {
+			baseText = fmt.Sprintf("%dч", hrs)
+		}
 	}
 
-	if status == "stale" {
-		base += " (stale)"
+	if isStale {
+		return baseText + " (stale)", colorMetaStale
 	}
-	return base
+	return baseText, colorLabel
+}
+
+// formatPercent — точный формат C#: b.Percent + "%"
+func formatPercent(pct float64) string {
+	if math.Mod(pct*10, 10) == 0 {
+		return fmt.Sprintf("%.0f%%", pct)
+	}
+	return fmt.Sprintf("%.1f%%", pct)
+}
+
+func getPercentColorAndFont(pct, frac float64, r *Renderer) (uint32, uintptr) {
+	if frac >= 1.0 || pct >= 100.0 {
+		return colorPercent100, r.fontRowBold
+	}
+	return colorLabel, r.fontRow
+}
+
+func findProviderState(snap *model.Snapshot, id string) *model.ProviderState {
+	if snap == nil {
+		return nil
+	}
+	for _, ps := range snap.Providers {
+		if strings.EqualFold(ps.Id, id) {
+			return ps
+		}
+	}
+	return nil
+}
+
+// CalculateWindowHeight вычисляет высоту окна по активным провайдерам из конфига
+func CalculateWindowHeight(snap *model.Snapshot, cfg *config.Config) int32 {
+	if cfg == nil {
+		return 402
+	}
+	providers := cfg.EffectiveProviders()
+	h := int32(6) // root margin top
+	cardCount := 0
+
+	for _, p := range providers {
+		if !p.Enabled {
+			continue
+		}
+		cardCount++
+		if p.Type == "kimi" {
+			h += 94
+		} else if p.Type == "openrouter" {
+			hasFree := true // по умолчанию есть free
+			st := findProviderState(snap, p.Id)
+			if st != nil && st.OpenRouter != nil {
+				hasFree = (st.OpenRouter.FreeDailyLimit > 0)
+			}
+			if hasFree {
+				h += 91
+			} else {
+				h += 62
+			}
+		} else if p.Type == "agy" {
+			h += 186
+		}
+	}
+
+	if cardCount > 1 {
+		h += int32(cardCount-1) * 6
+	}
+	h += 13 // root margin bottom
+
+	if h < 150 {
+		h = 150
+	}
+	if h > 650 {
+		h = 650
+	}
+	return h
 }
 
 // Render выполняет полную отрисовку карточек в 32-битный буфер
 func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
-	// Очищаем прозрачным цветом
+	// Очищаем прозрачным цветом (alpha=0)
 	procGdipGraphicsClear.Call(r.graphics, 0)
 
-	cardBg := argb(178, 30, 41, 59)       // rgba(30, 41, 59, 0.70)
-	cardBorder := argb(38, 148, 163, 184) // rgba(148, 163, 184, 0.15)
-	textMuted := argb(255, 148, 163, 184) // #94a3b8
-	textLabel := argb(255, 203, 213, 225) // #cbd5e1
+	cardX := float32(6)
+	cardW := float32(r.width - 12) // 278
+	contentX := cardX + 10          // 16
+	contentW := cardW - 20          // 258
+	curY := float32(6)              // root margin top
 
-	colorKimi := argb(255, 16, 185, 129)       // Emerald #10b981
-	colorOpenRouter := argb(255, 168, 85, 247) // Purple #a855f7
-	colorGemini := argb(255, 59, 130, 246)     // Blue #3b82f6
-	colorClaude := argb(255, 249, 115, 22)     // Orange #f97316
+	providers := cfg.EffectiveProviders()
 
-	cardX := float32(10)
-	cardW := float32(r.width - 20) // 270
-	curY := float32(10)
+	for i, p := range providers {
+		if !p.Enabled {
+			continue
+		}
 
-	// Найдём состояния провайдеров
-	var kimiState, orState, agyState *model.ProviderState
-	if snap != nil {
-		for _, p := range snap.Providers {
-			switch p.Id {
-			case "kimi":
-				kimiState = p
-			case "openrouter", "or", "or2":
-				if orState == nil {
-					orState = p
+		switch p.Type {
+		case "kimi":
+			st := findProviderState(snap, p.Id)
+			status := "online"
+			updated := ""
+			k7dPct, k7dFrac := 0.0, 0.0
+			k7dReset := "--"
+			k5hPct, k5hFrac := 0.0, 0.0
+			k5hReset := "--"
+
+			if st != nil {
+				status = st.Status
+				updated = st.LastUpdated
+				if st.Kimi != nil {
+					k7dPct = st.Kimi.Limit7d.UsedPercent
+					k7dFrac = st.Kimi.Limit7d.UsedFraction
+					k7dReset = st.Kimi.Limit7d.ResetIn
+
+					k5hPct = st.Kimi.Limit5h.UsedPercent
+					k5hFrac = st.Kimi.Limit5h.UsedFraction
+					k5hReset = st.Kimi.Limit5h.ResetIn
 				}
-			case "agy":
-				agyState = p
 			}
+
+			cardH := float32(94)
+			r.drawCardBackground(cardX, curY, cardW, cardH)
+
+			// Шапка: [Title] ................... [Время/статус]
+			title := p.Title
+			if title == "" {
+				title = "KIMI"
+			}
+			r.drawString(title, contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
+			timeText, timeColor := getRelativeTimeString(updated, status)
+			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
+
+			// Строка 1: Kimi 7d (сверху)
+			r7dY := curY + 28
+			r.drawString(formatResetTimeLabel(k7dReset), contentX, r7dY, 150, 16, r.fontRow, colorLabel, false)
+			pct7dColor, pct7dFont := getPercentColorAndFont(k7dPct, k7dFrac, r)
+			r.drawString(formatPercent(k7dPct), contentX+contentW-80, r7dY, 80, 16, pct7dFont, pct7dColor, true)
+			r.drawProgressBar(contentX, curY+45, contentW, barHeight, k7dFrac)
+
+			// Строка 2: Kimi 5h
+			r5hY := curY + 58
+			r.drawString(formatResetTimeLabel(k5hReset), contentX, r5hY, 150, 16, r.fontRow, colorLabel, false)
+			pct5hColor, pct5hFont := getPercentColorAndFont(k5hPct, k5hFrac, r)
+			r.drawString(formatPercent(k5hPct), contentX+contentW-80, r5hY, 80, 16, pct5hFont, pct5hColor, true)
+			r.drawProgressBar(contentX, curY+75, contentW, barHeight, k5hFrac)
+
+			curY += cardH
+
+		case "openrouter":
+			st := findProviderState(snap, p.Id)
+			status := "online"
+			updated := ""
+			orPct, orFrac := 0.0, 0.0
+			orReset := "--"
+			orBalance := 0.0
+			orLimit := 0.0
+			freeUsed := 0
+			freeLimit := 0
+			hasFree := false
+
+			if st != nil {
+				status = st.Status
+				updated = st.LastUpdated
+				if st.OpenRouter != nil {
+					orPct = st.OpenRouter.UsedPercent
+					orFrac = st.OpenRouter.UsedFraction
+					orReset = st.OpenRouter.ResetIn
+					orBalance = st.OpenRouter.LimitRemaining
+					orLimit = st.OpenRouter.Limit
+					freeUsed = st.OpenRouter.FreeDailyUsed
+					freeLimit = st.OpenRouter.FreeDailyLimit
+					hasFree = (freeLimit > 0)
+				}
+			}
+
+			cardH := float32(91)
+			if !hasFree {
+				cardH = float32(62)
+			}
+			r.drawCardBackground(cardX, curY, cardW, cardH)
+
+			// Шапка: [Title] [ост. $X.XX] ................... [Время/статус]
+			title := p.Title
+			if title == "" {
+				title = "OPENROUTER"
+			}
+			r.drawString(title, contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
+			titleWidth := r.measureStringWidth(title, r.fontTitle)
+			if status != "no_key" && orLimit > 0 {
+				balanceText := fmt.Sprintf("ост. $%.2f", orBalance)
+				r.drawString(balanceText, contentX+titleWidth+8, curY+9, 90, 16, r.fontMeta, colorLabel, false)
+			}
+			timeText, timeColor := getRelativeTimeString(updated, status)
+			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
+
+			// Строка 1: Месячный лимит
+			rMainY := curY + 28
+			r.drawString(formatResetTimeLabel(orReset), contentX, rMainY, 150, 16, r.fontRow, colorLabel, false)
+			pctColor, pctFont := getPercentColorAndFont(orPct, orFrac, r)
+			r.drawString(formatPercent(orPct), contentX+contentW-80, rMainY, 80, 16, pctFont, pctColor, true)
+			r.drawProgressBar(contentX, curY+45, contentW, barHeight, orFrac)
+
+			// Строка 2: Free Daily
+			if hasFree {
+				rFreeY := curY + 55
+				freeFrac := 0.0
+				freePct := 0.0
+				if freeLimit > 0 {
+					freeFrac = math.Max(0.0, math.Min(1.0, float64(freeUsed)/float64(freeLimit)))
+					freePct = math.Round(freeFrac*1000.0) / 10.0
+				}
+				r.drawString(fmt.Sprintf("free: %d/%d", freeUsed, freeLimit), contentX, rFreeY, 150, 16, r.fontRow, colorLabel, false)
+				fPctColor, fPctFont := getPercentColorAndFont(freePct, freeFrac, r)
+				r.drawString(formatPercent(freePct), contentX+contentW-80, rFreeY, 80, 16, fPctFont, fPctColor, true)
+				r.drawProgressBar(contentX, curY+72, contentW, barHeight, freeFrac)
+			}
+
+			curY += cardH
+
+		case "agy":
+			st := findProviderState(snap, p.Id)
+			status := "online"
+			updated := ""
+			g7dPct, g7dFrac, g7dReset := 0.0, 0.0, "--"
+			g5hPct, g5hFrac, g5hReset := 0.0, 0.0, "--"
+			c7dPct, c7dFrac, c7dReset := 0.0, 0.0, "--"
+			c5hPct, c5hFrac, c5hReset := 0.0, 0.0, "--"
+
+			if snap != nil {
+				status = snap.AgyStatus
+				if status == "" {
+					status = snap.Status
+				}
+				updated = snap.AgyLastUpdated
+				if updated == "" {
+					updated = snap.LastUpdated
+				}
+				g7dPct = snap.GeminiWeekly.UsedPercent
+				g7dFrac = snap.GeminiWeekly.UsedFraction
+				g7dReset = snap.GeminiWeekly.ResetIn
+
+				g5hPct = snap.Gemini5h.UsedPercent
+				g5hFrac = snap.Gemini5h.UsedFraction
+				g5hReset = snap.Gemini5h.ResetIn
+
+				c7dPct = snap.ClaudeWeekly.UsedPercent
+				c7dFrac = snap.ClaudeWeekly.UsedFraction
+				c7dReset = snap.ClaudeWeekly.ResetIn
+
+				c5hPct = snap.Claude5h.UsedPercent
+				c5hFrac = snap.Claude5h.UsedFraction
+				c5hReset = snap.Claude5h.ResetIn
+			} else if st != nil {
+				status = st.Status
+				updated = st.LastUpdated
+			}
+
+			cardH := float32(186)
+			r.drawCardBackground(cardX, curY, cardW, cardH)
+
+			// Шапка GEMINI: [GEMINI] ................... [Время/статус]
+			r.drawString("GEMINI", contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
+			timeText, timeColor := getRelativeTimeString(updated, status)
+			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
+
+			// Gemini 7d (Weekly first)
+			g7dY := curY + 28
+			r.drawString(formatResetTimeLabel(g7dReset), contentX, g7dY, 150, 16, r.fontRow, colorLabel, false)
+			g7dColor, g7dFont := getPercentColorAndFont(g7dPct, g7dFrac, r)
+			r.drawString(formatPercent(g7dPct), contentX+contentW-80, g7dY, 80, 16, g7dFont, g7dColor, true)
+			r.drawProgressBar(contentX, curY+45, contentW, barHeight, g7dFrac)
+
+			// Gemini 5h
+			g5hY := curY + 58
+			r.drawString(formatResetTimeLabel(g5hReset), contentX, g5hY, 150, 16, r.fontRow, colorLabel, false)
+			g5hColor, g5hFont := getPercentColorAndFont(g5hPct, g5hFrac, r)
+			r.drawString(formatPercent(g5hPct), contentX+contentW-80, g5hY, 80, 16, g5hFont, g5hColor, true)
+			r.drawProgressBar(contentX, curY+75, contentW, barHeight, g5hFrac)
+
+			// Divider: Color.FromArgb(0x18, 0, 0, 0), Height 0.8
+			divY := curY + 89
+			var divPen uintptr
+			procGdipCreatePen1.Call(uintptr(colorDivider), fbits(0.8), UnitPixel, uintptr(unsafe.Pointer(&divPen)))
+			procGdipDrawLine.Call(r.graphics, divPen, fbits(contentX), fbits(divY), fbits(contentX+contentW), fbits(divY))
+			procGdipDeletePen.Call(divPen)
+
+			// Шапка CLAUDE/GPT (без времени справа)
+			r.drawString("CLAUDE/GPT", contentX, curY+97, 120, 16, r.fontTitle, colorHeader, false)
+
+			// Claude 7d (Weekly first)
+			c7dY := curY + 117
+			r.drawString(formatResetTimeLabel(c7dReset), contentX, c7dY, 150, 16, r.fontRow, colorLabel, false)
+			c7dColor, c7dFont := getPercentColorAndFont(c7dPct, c7dFrac, r)
+			r.drawString(formatPercent(c7dPct), contentX+contentW-80, c7dY, 80, 16, c7dFont, c7dColor, true)
+			r.drawProgressBar(contentX, curY+134, contentW, barHeight, c7dFrac)
+
+			// Claude 5h
+			c5hY := curY + 147
+			r.drawString(formatResetTimeLabel(c5hReset), contentX, c5hY, 150, 16, r.fontRow, colorLabel, false)
+			c5hColor, c5hFont := getPercentColorAndFont(c5hPct, c5hFrac, r)
+			r.drawString(formatPercent(c5hPct), contentX+contentW-80, c5hY, 80, 16, c5hFont, c5hColor, true)
+			r.drawProgressBar(contentX, curY+164, contentW, barHeight, c5hFrac)
+
+			curY += cardH
+		}
+
+		if i < len(providers)-1 {
+			curY += 6 // gap between cards
 		}
 	}
-
-	// 1. Карточка KIMI (высота ~96px)
-	cardH1 := float32(96)
-	r.drawRoundedRect(cardX, curY, cardW, cardH1, 10, cardBg, cardBorder)
-
-	// KIMI Header
-	kimiStatus := "online"
-	kimiUpdated := ""
-	if kimiState != nil {
-		kimiStatus = kimiState.Status
-		kimiUpdated = kimiState.LastUpdated
-	}
-	r.drawString("KIMI", cardX+12, curY+10, 100, 16, r.fontTitle, colorKimi, false)
-	r.drawString(getRelativeTimeString(kimiUpdated, kimiStatus), cardX+cardW-120, curY+11, 108, 16, r.fontText, textMuted, true)
-
-	// KIMI 7d Row
-	k7dPct := 0.0
-	k7dFrac := 0.0
-	k7dReset := "--"
-	if kimiState != nil && kimiState.Kimi != nil {
-		k7dPct = kimiState.Kimi.Limit7d.UsedPercent
-		k7dFrac = kimiState.Kimi.Limit7d.UsedFraction
-		k7dReset = formatRuTimeDiff(kimiState.Kimi.Limit7d.ResetIn)
-	}
-	r.drawString("Лимит 7d", cardX+12, curY+30, 100, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%% • %s", k7dPct, k7dReset), cardX+cardW-140, curY+30, 128, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+47, cardW-24, 5.5, k7dFrac, fetchers.GetUsedStatusLevel(k7dFrac))
-
-	// KIMI 5h Row
-	k5hPct := 0.0
-	k5hFrac := 0.0
-	k5hReset := "--"
-	if kimiState != nil && kimiState.Kimi != nil {
-		k5hPct = kimiState.Kimi.Limit5h.UsedPercent
-		k5hFrac = kimiState.Kimi.Limit5h.UsedFraction
-		k5hReset = formatRuTimeDiff(kimiState.Kimi.Limit5h.ResetIn)
-	}
-	r.drawString("Лимит 5h", cardX+12, curY+60, 100, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%% • %s", k5hPct, k5hReset), cardX+cardW-140, curY+60, 128, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+77, cardW-24, 5.5, k5hFrac, fetchers.GetUsedStatusLevel(k5hFrac))
-
-	curY += cardH1 + 6
-
-	// 2. Карточка OPENROUTER (высота ~96px)
-	cardH2 := float32(96)
-	r.drawRoundedRect(cardX, curY, cardW, cardH2, 10, cardBg, cardBorder)
-
-	// Header: OPENROUTER + ост. $X.XX + time
-	orStatus := "online"
-	orUpdated := ""
-	orBalance := 0.0
-	if orState != nil {
-		orStatus = orState.Status
-		orUpdated = orState.LastUpdated
-		if orState.OpenRouter != nil {
-			orBalance = orState.OpenRouter.LimitRemaining
-		}
-	}
-	r.drawString("OPENROUTER", cardX+12, curY+10, 95, 16, r.fontTitle, colorOpenRouter, false)
-	if orStatus != "no_key" && orBalance > 0 {
-		r.drawString(fmt.Sprintf("ост. $%.2f", orBalance), cardX+110, curY+11, 75, 16, r.fontText, textMuted, false)
-	}
-	r.drawString(getRelativeTimeString(orUpdated, orStatus), cardX+cardW-110, curY+11, 98, 16, r.fontText, textMuted, true)
-
-	// OR Main Row
-	orPct := 0.0
-	orFrac := 0.0
-	orReset := "--"
-	if orState != nil && orState.OpenRouter != nil {
-		orPct = orState.OpenRouter.UsedPercent
-		orFrac = orState.OpenRouter.UsedFraction
-		orReset = formatRuTimeDiff(orState.OpenRouter.ResetIn)
-	}
-	r.drawString("Месячный лимит", cardX+12, curY+30, 100, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%% • %s", orPct, orReset), cardX+cardW-140, curY+30, 128, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+47, cardW-24, 5.5, orFrac, fetchers.GetUsedStatusLevel(orFrac))
-
-	// OR Free Row
-	orFreeUsed := 0
-	orFreeLimit := 1000
-	orFreeFrac := 0.0
-	orFreePct := 0.0
-	if orState != nil && orState.OpenRouter != nil {
-		orFreeUsed = orState.OpenRouter.FreeDailyUsed
-		if orState.OpenRouter.FreeDailyLimit > 0 {
-			orFreeLimit = orState.OpenRouter.FreeDailyLimit
-		}
-		if orFreeLimit > 0 {
-			orFreeFrac = float64(orFreeUsed) / float64(orFreeLimit)
-			orFreePct = math.Round(orFreeFrac*1000) / 10
-		}
-	}
-	r.drawString(fmt.Sprintf("free: %d/%d", orFreeUsed, orFreeLimit), cardX+12, curY+60, 110, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%%", orFreePct), cardX+cardW-70, curY+60, 58, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+77, cardW-24, 5.5, orFreeFrac, "ok")
-
-	curY += cardH2 + 6
-
-	// 3. Карточка AGY: GEMINI + CLAUDE/GPT (высота ~178px)
-	cardH3 := float32(178)
-	r.drawRoundedRect(cardX, curY, cardW, cardH3, 10, cardBg, cardBorder)
-
-	agyStatusStr := "online"
-	agyUpdated := ""
-	if agyState != nil {
-		agyStatusStr = agyState.Status
-		agyUpdated = agyState.LastUpdated
-	}
-	r.drawString("GEMINI", cardX+12, curY+10, 95, 16, r.fontTitle, colorGemini, false)
-	r.drawString(getRelativeTimeString(agyUpdated, agyStatusStr), cardX+cardW-120, curY+11, 108, 16, r.fontText, textMuted, true)
-
-	// Gemini 7d (Weekly first)
-	g7dPct := 0.0
-	g7dFrac := 0.0
-	g7dReset := "--"
-	if snap != nil {
-		g7dPct = snap.GeminiWeekly.UsedPercent
-		g7dFrac = snap.GeminiWeekly.UsedFraction
-		g7dReset = formatRuTimeDiff(snap.GeminiWeekly.ResetIn)
-	}
-	r.drawString("Лимит 7d", cardX+12, curY+29, 100, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%% • %s", g7dPct, g7dReset), cardX+cardW-140, curY+29, 128, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+45, cardW-24, 5.5, g7dFrac, fetchers.GetUsedStatusLevel(g7dFrac))
-
-	// Gemini 5h
-	g5hPct := 0.0
-	g5hFrac := 0.0
-	g5hReset := "--"
-	if snap != nil {
-		g5hPct = snap.Gemini5h.UsedPercent
-		g5hFrac = snap.Gemini5h.UsedFraction
-		g5hReset = formatRuTimeDiff(snap.Gemini5h.ResetIn)
-	}
-	r.drawString("Лимит 5h", cardX+12, curY+58, 100, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%% • %s", g5hPct, g5hReset), cardX+cardW-140, curY+58, 128, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+74, cardW-24, 5.5, g5hFrac, fetchers.GetUsedStatusLevel(g5hFrac))
-
-	// Divider
-	divY := curY + 88
-	var divPen uintptr
-	procGdipCreatePen1.Call(uintptr(argb(20, 255, 255, 255)), fbits(0.8), UnitPixel, uintptr(unsafe.Pointer(&divPen)))
-	procGdipDrawLine.Call(r.graphics, divPen, fbits(cardX+12), fbits(divY), fbits(cardX+cardW-12), fbits(divY))
-	procGdipDeletePen.Call(divPen)
-
-	// Claude Section
-	r.drawString("CLAUDE/GPT", cardX+12, curY+96, 120, 16, r.fontTitle, colorClaude, false)
-
-	// Claude 7d (Weekly first)
-	c7dPct := 0.0
-	c7dFrac := 0.0
-	c7dReset := "--"
-	if snap != nil {
-		c7dPct = snap.ClaudeWeekly.UsedPercent
-		c7dFrac = snap.ClaudeWeekly.UsedFraction
-		c7dReset = formatRuTimeDiff(snap.ClaudeWeekly.ResetIn)
-	}
-	r.drawString("Лимит 7d", cardX+12, curY+115, 100, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%% • %s", c7dPct, c7dReset), cardX+cardW-140, curY+115, 128, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+131, cardW-24, 5.5, c7dFrac, fetchers.GetUsedStatusLevel(c7dFrac))
-
-	// Claude 5h
-	c5hPct := 0.0
-	c5hFrac := 0.0
-	c5hReset := "--"
-	if snap != nil {
-		c5hPct = snap.Claude5h.UsedPercent
-		c5hFrac = snap.Claude5h.UsedFraction
-		c5hReset = formatRuTimeDiff(snap.Claude5h.ResetIn)
-	}
-	r.drawString("Лимит 5h", cardX+12, curY+144, 100, 14, r.fontText, textLabel, false)
-	r.drawString(fmt.Sprintf("%.1f%% • %s", c5hPct, c5hReset), cardX+cardW-140, curY+144, 128, 14, r.fontText, textLabel, true)
-	r.drawProgressBar(cardX+12, curY+160, cardW-24, 5.5, c5hFrac, fetchers.GetUsedStatusLevel(c5hFrac))
 
 	return nil
 }

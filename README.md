@@ -418,21 +418,26 @@ A native HUD overlay based on [Wails v2](https://wails.io/) (Go + WebKit/WebView
 - **Binaries**: Stored in `go/dist/`: `llm-limits-overlay.exe` (Windows amd64) and `llm-limits-overlay` (Linux amd64).
 - **Verification on Windows**: Automated test via `powershell.exe -ExecutionPolicy Bypass -File go/verify-stage3.ps1` validates live key fetch cycles, translucent screenshot checksum divergence, `Ctrl+Alt+L` click-through toggling, systray presence, single-instance enforcement, position restoration, and `no_key` & `stale` handling.
 
-#### 8. Go GUI (Win32 Layered Window — PoC without WebView2)
-An experimental ultra-lightweight HUD overlay based on pure **Win32 Layered Windows** and GDI+ rendering (`gdiplus.dll`) lives in `go/cmd/overlay32/`.
+#### 8. Go GUI (Win32 Layered Window — Native Overlay without WebView2)
+A lightweight HUD overlay based on pure **Win32 Layered Windows** and GDI+ rendering (`gdiplus.dll`) lives in `go/cmd/overlay32/`. In Stage 5, it achieves 1:1 visual and behavioral parity with the reference C#/WPF overlay.
 
 - **Stack**: Pure Go (`CGO_ENABLED=0`), `UpdateLayeredWindow` with a 32-bit DIB section (BGRA, premultiplied alpha), GDI+ for anti-aliasing and ClearType typography, `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `HTCAPTION` drag).
+- **1:1 C# Parity**:
+  - Full adherence to `OverlayTheme.cs` styles (translucent frosted slate `#7CEEF2F6`, subtle border `#2064748B`, black titles `#000000`, label text `#0F172A`, stale/muted text `#475569`).
+  - Linear color interpolation for progress bars from `#4B5563` (0.0) to `#111827` (1.0).
+  - Dynamic window height adapting to the number of configured providers (3 cards = 402px, 4 cards = 499px).
+  - Support for `no_key`, `stale`, per-card timers, and multiple keys per provider.
 - **Resource Footprint**:
-  - Memory (WorkingSet64): **~30 MB** (half of WPF's 66 MB, and 13x lighter than Wails' 389 MB).
+  - Memory (WorkingSet64): **~31 MB** (half of WPF's 66 MB, and 13x lighter than Wails' 389 MB).
   - Child Processes: **0** (no WebView2 / Chromium processes).
-  - CPU (60s total): **~0.05s**.
+  - CPU (60s total): **~0.06s**.
   - Binary Size: **7.35 MB** (pure Go static executable, no CGO or MinGW required).
 - **Build**:
   ```bash
   cd go
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -o dist/llm-limits-overlay32.exe ./cmd/overlay32
   ```
-- **Verification on Windows**: Automated test via `go/verify-overlay32.ps1` verifies background translucency, system tray presence, `Ctrl+Alt+L` click-through toggling, dragging, and position restoration.
+- **Verification on Windows**: Automated test via `go/verify-stage5.ps1` runs side-by-side with the C# overlay on identical data, checks white/dark backdrop MD5 divergence, performs a 60-second memory benchmark, and verifies `no_key`, `stale`, and 4-card dynamic height scaling.
 
 ---
 

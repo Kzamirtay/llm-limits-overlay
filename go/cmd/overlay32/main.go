@@ -21,9 +21,9 @@ import (
 
 const (
 	windowClassName = "LLMLimitsOverlay32Class"
-	windowTitle     = "LLM Limits Overlay 32"
+	windowTitle     = "LLM Limits Overlay"
 	windowWidth     = 290
-	windowHeight    = 402
+	defaultHeight   = 402
 
 	ERROR_ALREADY_EXISTS = 183
 )
@@ -32,18 +32,20 @@ var (
 	procCreateMutexW = kernel32.NewProc("CreateMutexW")
 	procFindWindowW  = user32.NewProc("FindWindowW")
 
-	appDir       string
-	cfg          *config.Config
-	mainHWND     uintptr
-	renderer     *Renderer
-	clickThrough atomic.Bool
-	isVisible    = true
-	isFetching   atomic.Bool
+	appDir           string
+	cfg              *config.Config
+	mainHWND         uintptr
+	renderer         *Renderer
+	clickThrough     atomic.Bool
+	isVisible        = true
+	isFetching       atomic.Bool
+	isUserPositioned bool
 
 	snapMu       sync.RWMutex
 	lastSnapshot *model.Snapshot
 
-	posX, posY int32
+	posX, posY    int32
+	currentHeight int32 = defaultHeight
 )
 
 type WindowPosition struct {
@@ -78,23 +80,25 @@ func checkSingleInstance() (uintptr, bool) {
 	return hMutex, true
 }
 
-func loadWindowPosition() (int32, int32) {
+func loadWindowPosition(h int32) (int32, int32) {
 	posPath := filepath.Join(appDir, "window.pos.json")
 	raw, err := os.ReadFile(posPath)
 	if err == nil {
 		var pos WindowPosition
 		if json.Unmarshal(raw, &pos) == nil && (pos.X != 0 || pos.Y != 0) {
+			isUserPositioned = true
 			return int32(pos.X), int32(pos.Y)
 		}
 	}
 
-	// Дефолт: правый-нижний угол основного экрана
+	isUserPositioned = false
+	// Дефолт: правый-нижний угол основного экрана (MarginRight=14, MarginBottom=4)
 	rW, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
 	rH, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
 	w := int32(rW)
-	h := int32(rH)
+	scrH := int32(rH)
 	x := w - windowWidth - 14
-	y := h - windowHeight - 4
+	y := scrH - h - 4
 	return x, y
 }
 
@@ -154,15 +158,45 @@ func toggleVisibility() {
 }
 
 func resetPosition() {
+	isUserPositioned = false
 	rW, _, _ := procGetSystemMetrics.Call(0)
 	rH, _, _ := procGetSystemMetrics.Call(1)
 	posX = int32(rW) - windowWidth - 14
-	posY = int32(rH) - windowHeight - 4
+	posY = int32(rH) - currentHeight - 4
 	saveWindowPosition(posX, posY)
 	if mainHWND != 0 {
-		procSetWindowPos.Call(mainHWND, 0, uintptr(posX), uintptr(posY), 0, 0, uintptr(SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE))
+		procSetWindowPos.Call(mainHWND, 0, uintptr(posX), uintptr(posY), uintptr(windowWidth), uintptr(currentHeight), uintptr(SWP_NOZORDER|SWP_NOACTIVATE))
 		requestRender()
 	}
+}
+
+func applyWindowHeight(hwnd uintptr, newH int32) {
+	if newH == currentHeight && renderer != nil {
+		return
+	}
+	oldH := currentHeight
+	currentHeight = newH
+
+	if !isUserPositioned {
+		rW, _, _ := procGetSystemMetrics.Call(0)
+		rH, _, _ := procGetSystemMetrics.Call(1)
+		posX = int32(rW) - windowWidth - 14
+		posY = int32(rH) - newH - 4
+	} else {
+		posY = posY - (newH - oldH)
+	}
+
+	if renderer != nil {
+		renderer.Destroy()
+		rnd, err := NewRenderer(windowWidth, newH)
+		if err == nil {
+			renderer = rnd
+		} else {
+			fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] resize NewRenderer failed: %v", err))
+		}
+	}
+
+	procSetWindowPos.Call(hwnd, 0, uintptr(posX), uintptr(posY), uintptr(windowWidth), uintptr(newH), uintptr(SWP_NOZORDER|SWP_NOACTIVATE))
 }
 
 func requestRender() {
@@ -218,6 +252,7 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rect)))
 		posX = rect.Left
 		posY = rect.Top
+		isUserPositioned = true
 		saveWindowPosition(posX, posY)
 		return 0
 
@@ -228,12 +263,20 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		return 0
 
 	case WM_USER_RENDER:
-		if renderer != nil && isVisible {
+		if isVisible {
 			snapMu.RLock()
 			s := lastSnapshot
 			snapMu.RUnlock()
-			renderer.Render(s, cfg)
-			renderer.Present(hwnd, posX, posY)
+
+			targetH := CalculateWindowHeight(s, cfg)
+			if targetH != currentHeight || renderer == nil {
+				applyWindowHeight(hwnd, targetH)
+			}
+
+			if renderer != nil {
+				renderer.Render(s, cfg)
+				renderer.Present(hwnd, posX, posY)
+			}
 		}
 		return 0
 
@@ -283,7 +326,16 @@ func main() {
 	}
 	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
 
-	posX, posY = loadWindowPosition()
+	// Загружаем кэшированные данные с диска перед созданием окна для точного расчёта высоты
+	snap := fetchers.LoadSnapshotFromDisk(cfg, appDir)
+	if snap != nil {
+		snapMu.Lock()
+		lastSnapshot = snap
+		snapMu.Unlock()
+	}
+
+	currentHeight = CalculateWindowHeight(lastSnapshot, cfg)
+	posX, posY = loadWindowPosition(currentHeight)
 
 	exStyle := uintptr(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST)
 	if clickThrough.Load() {
@@ -297,7 +349,7 @@ func main() {
 		uintptr(unsafe.Pointer(titleName)),
 		style,
 		uintptr(posX), uintptr(posY),
-		uintptr(windowWidth), uintptr(windowHeight),
+		uintptr(windowWidth), uintptr(currentHeight),
 		0, 0, hInst, 0,
 	)
 	if hwnd == 0 {
@@ -319,21 +371,13 @@ func main() {
 	}
 
 	// Инициализируем рендерер
-	rnd, errRnd := NewRenderer(windowWidth, windowHeight)
+	rnd, errRnd := NewRenderer(windowWidth, currentHeight)
 	if errRnd != nil {
 		fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] NewRenderer failed: %v", errRnd))
 		os.Exit(1)
 	}
 	renderer = rnd
 	defer renderer.Destroy()
-
-	// Загружаем кэшированные данные с диска
-	snap := fetchers.LoadSnapshotFromDisk(cfg, appDir)
-	if snap != nil {
-		snapMu.Lock()
-		lastSnapshot = snap
-		snapMu.Unlock()
-	}
 
 	// Первый рендеринг
 	renderer.Render(lastSnapshot, cfg)
@@ -346,7 +390,7 @@ func main() {
 	// Фоновый первый фетч
 	triggerFetch(false)
 
-	// Тикер на 10с для перерисовки относительного времени
+	// Тикер на 10с для перерисовки относительного времени без сетевых запросов
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()

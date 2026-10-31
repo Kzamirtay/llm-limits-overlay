@@ -416,21 +416,26 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o dist/llm-limits.exe ./cmd/ll
 - **Бинарники**: В `go/dist/`: `llm-limits-overlay.exe` (Windows amd64) и `llm-limits-overlay` (Linux amd64).
 - **Проверка на Windows**: Автоматизированный скрипт `go/verify-stage3.ps1` тестирует живые ключи (циклы опроса), различие MD5-хэшей скриншотов на контрастных подложках, хоткей `Ctrl+Alt+L`, трей, single-instance, персист позиции и сценарии `no_key` и `stale`.
 
-#### 8. Go GUI (Win32 Layered Window — PoC без WebView2)
-Экспериментальный легковесный HUD-оверлей на чистом **Win32 Layered Window** с отрисовкой через GDI+ (`gdiplus.dll`) находится в `go/cmd/overlay32/`.
+#### 8. Go GUI (Win32 Layered Window — нативный оверлей без WebView2)
+Легковесный HUD-оверлей на чистом **Win32 Layered Window** с отрисовкой через GDI+ (`gdiplus.dll`) находится в `go/cmd/overlay32/`. В Этапе 5 доведён до полного 1:1 соответствия эталонному C#/WPF-оверлею по лейауту, цветам, кеглям и динамике.
 
 - **Стек**: Чистый Go (сборка с `CGO_ENABLED=0`), `UpdateLayeredWindow` с 32-битным DIB-буфером (BGRA, premultiplied alpha), GDI+ для скруглений и ClearType-типографики, `fyne.io/systray` для трея, Win32 API (`RegisterHotKey`, `HTCAPTION` для drag).
+- **1:1 соответствие C#**:
+  - Точный перенос всех стилей и констант из `OverlayTheme.cs` (полупрозрачный матовый фон `#7CEEF2F6`, тонкий бордюр `#2064748B`, черные заголовки `#000000`, текст `#0F172A`, статус `#475569`).
+  - Линейная интерполяция цвета бара от `#4B5563` (0.0) до `#111827` (1.0).
+  - Динамическая высота окна по числу карточек в `overlay.config.json` (3 карточки = 402px, 4 карточки = 499px).
+  - Поддержка `no_key`, `stale`, per-card таймингов и нескольких ключей одного провайдера.
 - **Потребление ресурсов**:
-  - Память (WorkingSet64): **~30 МБ** (в 2 раза меньше, чем у WPF 66 МБ, и в 13 раз меньше, чем у Wails 389 МБ).
-  - Дочерние процессы: **0** (нет процессов WebView2).
-  - CPU за 60с: **~0.05с**.
+  - Память (WorkingSet64): **~31 МБ** (в 2 раза меньше, чем у WPF 66 МБ, и в 13 раз меньше, чем у Wails 389 МБ).
+  - Дочерние процессы: **0** (нет процессов WebView2 / Chromium).
+  - CPU за 60с: **~0.06с**.
   - Размер exe: **7.35 МБ** (статический бинарник, чистый Go без cgo и без gcc).
 - **Сборка**:
   ```bash
   cd go
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H windowsgui" -o dist/llm-limits-overlay32.exe ./cmd/overlay32
   ```
-- **Проверка на Windows**: Скрипт `go/verify-overlay32.ps1` проверяет прозрачность, трей, хоткей `Ctrl+Alt+L`, drag и персистентность позиции.
+- **Проверка на Windows**: Автоматизированный скрипт `go/verify-stage5.ps1` проводит сквозную приёмку: попиксельное совпадение с запущенным C#-оверлеем на одних и тех же данных (`stage5-cs.png` vs `stage5-go.png`), замер прозрачности на белой и тёмной подложке, 60-секундный бенчмарк памяти, сценарии `no_key`, `stale` и динамическое масштабирование под 4 карточки.
 
 ---
 
