@@ -1,12 +1,12 @@
 $ErrorActionPreference = "Stop"
 $env:SEE_MASK_NOZONECHECKS = "1"
 
-$setupExe = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\dist\LlmLimitsOverlay-Setup-2.0.0.exe"
+$setupExe = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\dist\LlmLimitsOverlay-Setup-2.0.1.exe"
 $envSource = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\go\dist\.env"
 $smokeDir = "C:\Users\User\AppData\Local\Temp\llmo-smoke-test"
-$localSetup = "C:\Users\User\AppData\Local\Temp\LlmLimitsOverlay-Setup-2.0.0.exe"
+$localSetup = "C:\Users\User\AppData\Local\Temp\LlmLimitsOverlay-Setup-2.0.1.exe"
 
-Write-Host "=== SMOKE TEST: LLM Limits Overlay 2.0.0 ==="
+Write-Host "=== SMOKE TEST: LLM Limits Overlay 2.0.1 ==="
 
 # 0. Check setup exe exists and copy locally to avoid UNC security prompts
 if (-not (Test-Path $setupExe)) {
@@ -44,8 +44,8 @@ Write-Host "[2/6] Testing CLI (--version and --json)..."
 $cliExe = Join-Path $smokeDir "llm-limits.exe"
 $verOut = & $cliExe --version
 Write-Host "  -> CLI version output: $verOut"
-if ($verOut -notmatch "2\.0\.0") {
-    throw "CLI --version did not output 2.0.0"
+if ($verOut -notmatch "2\.0\.1") {
+    throw "CLI --version did not output 2.0.1"
 }
 
 # Copy .env with keys for live fetch
@@ -64,6 +64,54 @@ Write-Host "[3/6] Launching GUI overlay for 2 fetch cycles..."
 $overlayExe = Join-Path $smokeDir "llm-limits-overlay.exe"
 $guiProc = Start-Process -FilePath $overlayExe -WorkingDirectory $smokeDir -PassThru
 Write-Host "  -> Overlay process started (PID $($guiProc.Id))"
+Start-Sleep -Seconds 3
+
+# Verify window bounds relative to work area and taskbar
+$win32Type = @"
+using System;
+using System.Runtime.InteropServices;
+public class SmokeWin {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool SystemParametersInfo(int uAction, int uParam, ref RECT lpvParam, int fuWinIni);
+
+    public static IntPtr FindOverlayWindow(uint pid) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hWnd, lParam) => {
+            uint procId;
+            GetWindowThreadProcessId(hWnd, out procId);
+            if (procId == pid) {
+                found = hWnd;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+}
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT { public int Left, Top, Right, Bottom; }
+"@
+if (-not ([System.Management.Automation.PSTypeName]"SmokeWin").Type) {
+    Add-Type -TypeDefinition $win32Type
+}
+
+$smokeWa = New-Object RECT
+[SmokeWin]::SystemParametersInfo(0x0030, 0, [ref]$smokeWa, 0) | Out-Null
+$smokeHwnd = [SmokeWin]::FindOverlayWindow($guiProc.Id)
+if ($smokeHwnd -ne [IntPtr]::Zero) {
+    $smokeRect = New-Object RECT
+    [SmokeWin]::GetWindowRect($smokeHwnd, [ref]$smokeRect) | Out-Null
+    $gapBottom = $smokeWa.Bottom - $smokeRect.Bottom
+    Write-Host "  -> Window bounds: Left=$($smokeRect.Left), Top=$($smokeRect.Top), Bottom=$($smokeRect.Bottom) (WorkArea Bottom=$($smokeWa.Bottom))"
+    Write-Host "  -> Taskbar gap: $gapBottom px (expected 12)"
+    if ($smokeRect.Bottom -gt $smokeWa.Bottom) {
+        throw "Window is positioned under/overlapping taskbar! Bottom=$($smokeRect.Bottom) > $($smokeWa.Bottom)"
+    }
+    Write-Host "  -> [PASS] Window is positioned strictly above taskbar!"
+}
 
 # Cycle 1: wait for initial fetch (up to 15s)
 $logPath = Join-Path $smokeDir "overlay32.log"

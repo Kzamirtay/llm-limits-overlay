@@ -293,7 +293,8 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 > [!NOTE]
 > **История версий**:
-> - **v2.0.0+**: Полный переход на чистый Go (нативный Win32 HUD + CLI). Без внешних зависимостей.
+> - **v2.0.1**: Позиционирование относительно рабочей области Windows (`SystemParametersInfoW SPI_GETWORKAREA`) — размещение строго над таскбаром с отступом и клампингом границ.
+> - **v2.0.0**: Полный переход на чистый Go (нативный Win32 HUD + CLI). Без внешних зависимостей.
 > - **v1.1.0–v1.4.1**: C# / .NET Framework 4.8 / WPF автономное приложение (`LlmLimitsOverlay.exe`). Исходники доступны в тегах `≤ v1.4.1`.
 > - **v1.0.0**: Прототип на PowerShell (архивирован в git-теге `v1.0.0`).
 
@@ -306,7 +307,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### Способы запуска
 
 #### 1. Запуск готового бинарника из Releases
-1. Скачайте архив `LlmLimitsOverlay-v2.0.0-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Скачайте архив `LlmLimitsOverlay-v2.0.1-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Распакуйте в любую удобную папку.
 3. Создайте `.env` с API-ключами (скопируйте из `.env.example`).
 4. Убедитесь, что `agy.exe` установлен и вы авторизованы (`agy auth login`).
@@ -332,7 +333,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows-установщик (v2.0.0+)
-Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.0.0.exe` (Inno Setup 6).
+Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.0.1.exe` (Inno Setup 6).
 
 **Возможности:**
 - Устанавливает `llm-limits-overlay.exe` (GUI) и `llm-limits.exe` (CLI) в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
@@ -345,7 +346,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 
 **Тихая установка (для автоматизации):**
 ```cmd
-LlmLimitsOverlay-Setup-2.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.0.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **Предупреждение SmartScreen**: установщик не подписан цифровой подписью (нет EV-сертификата). Windows SmartScreen покажет «Защита Windows» — нажмите «Подробнее» → «Всё равно запустить». Это нормально для open-source проектов без платного сертификата.

@@ -371,7 +371,7 @@ func main() {
 	defer windows.CloseHandle(windows.Handle(hMutex))
 
 	initAppDir()
-	fetchers.LogLine(appDir, fmt.Sprintf("=== LLM Limits Overlay v2.0.0 Starting (PID=%d) ===", os.Getpid()))
+	fetchers.LogLine(appDir, fmt.Sprintf("=== LLM Limits Overlay v2.0.1 Starting (PID=%d) ===", os.Getpid()))
 
 	// GDI+ Startup
 	var gdiplusToken uintptr
