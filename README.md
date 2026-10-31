@@ -19,11 +19,10 @@
 ## Features
 
 - **Always-on-Top HUD**: Floats seamlessly above all windows in the bottom-right corner of the screen above the taskbar.
-- **Dynamic Height Auto-Sizing (`SizeToContent="Height"`)**: Automatically conforms to content height so card shadows and rounded bottom corners are never clipped.
+- **Dynamic Height Auto-Sizing**: Window height is automatically calculated on each render based on configured provider cards (`render.go`), so card shadows and rounded bottom corners are never clipped.
 - **Zero Desktop Clutter**:
-  - `ShowInTaskbar="False"`: Does not take up space on the Windows taskbar.
-  - `WS_EX_TOOLWINDOW`: Excluded from the `Alt-Tab` application switcher.
-  - Native Win32 GUI subsystem (`/target:winexe`): Launches silently without flashing CMD/PowerShell console windows or helper launchers.
+  - Style `WS_EX_TOOLWINDOW`: Does not take up space on the Windows taskbar and is excluded from the `Alt-Tab` application switcher.
+  - Native Windows GUI subsystem (`-ldflags="-H windowsgui"`): Launches silently without flashing CMD/PowerShell console windows or helper launchers.
 - **Monochrome Visual Indicators**: A unified graphite scale that gradually darkens as quota is consumed (from neutral gray to deep black), avoiding distracting traffic-light colors.
 - **Free Dragging & System Tray Control**:
   - Left-click and drag: Move the HUD to any preferred position on the screen.
@@ -65,7 +64,7 @@ Each card shows its own **relative update time** in the bottom-right corner (`т
 
 ## System Requirements
 
-- **OS**: Windows 10 or Windows 11 (64-bit). No WebView2, no .NET runtime required.
+- **OS**: Windows 10 or Windows 11 (64-bit). No WebView2 or external runtime required.
 - **Antigravity CLI**: `agy.exe` (v1.4.9+) installed and signed in (`agy auth login`). Resolved automatically from `PATH` or `%LOCALAPPDATA%\agy\bin\agy.exe`.
 - **No Python. No WSL.** Starting from v1.2.0 the overlay is fully self-contained.
 
@@ -276,7 +275,7 @@ The built-in parser supports:
 ## Architecture & Memory Footprint
 
 Starting with version **2.0.0**, the project is implemented entirely in pure **Go** (`CGO_ENABLED=0`):
-- **GUI Overlay (`llm-limits-overlay.exe`)**: A lightweight Always-on-Top HUD using native Win32 Layered Windows (`UpdateLayeredWindow` + 32-bit premultiplied ARGB DIB) and GDI+ rendering (`gdiplus.dll`). It requires no WebView2, no Chromium runtime, no .NET runtime, and zero external DLLs.
+- **GUI Overlay (`llm-limits-overlay.exe`)**: A lightweight Always-on-Top HUD using native Win32 Layered Windows (`UpdateLayeredWindow` + 32-bit premultiplied ARGB DIB) and GDI+ rendering (`gdiplus.dll`). It requires no WebView2, no Chromium runtime, and zero external DLLs.
 - **CLI (`llm-limits.exe` / `llm-limits-linux-x64`)**: Standalone static command-line tool with zero runtime dependencies.
 
 ### Memory & Resource Footprint
