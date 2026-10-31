@@ -75,26 +75,28 @@ Add-Type -TypeDefinition $code -ReferencedAssemblies System.Drawing
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 $DistDir = "$RepoRoot\go\dist"
-$CsExeSrc = "$RepoRoot\dotnet\bin\LlmLimitsOverlay.exe"
-$GoExeSrc = "$DistDir\llm-limits-overlay32.exe"
+$GoExeSrc = "$DistDir\llm-limits-overlay.exe"
+if (-not (Test-Path $GoExeSrc)) {
+    $GoExeSrc = "$DistDir\llm-limits-overlay32.exe"
+}
 
 $TestDir = "C:\Users\User\AppData\Local\Temp\go_stage5_test"
 
 Write-Output "=========================================================="
-Write-Output "  LLM Limits Overlay32 - Stage 5 Verification & 1:1 Parity"
+Write-Output "  LLM Limits Overlay32 - Stage 5 Verification"
 Write-Output "=========================================================="
 
-# Find and suspend user's running WPF overlay to prevent hotkey/tray conflicts
-$runningWpf = Get-Process -Name "LlmLimitsOverlay" -ErrorAction SilentlyContinue
-$wpfPath = $null
-if ($runningWpf) {
-    $wpfPath = $runningWpf[0].Path
-    Write-Output "[Setup] Temporarily suspending running WPF overlay (PID $($runningWpf[0].Id)) for tests..."
-    Stop-Process -Id $runningWpf.Id -Force
+# Find and suspend user's running overlay to prevent hotkey/tray conflicts
+$runningOverlays = Get-Process -Name "llm-limits-overlay", "llm-limits-overlay32", "LlmLimitsOverlay" -ErrorAction SilentlyContinue
+$restorableProc = $null
+if ($runningOverlays) {
+    $restorableProc = $runningOverlays[0].Path
+    Write-Output "[Setup] Temporarily suspending running overlay (PID $($runningOverlays[0].Id)) for tests..."
+    Stop-Process -Id $runningOverlays.Id -Force
     Start-Sleep -Seconds 1
 }
 
-Stop-Process -Name "llm-limits-overlay32" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "llm-limits-overlay", "llm-limits-overlay32" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
 try {
@@ -106,7 +108,6 @@ try {
 
     # Copy files
     Copy-Item $GoExeSrc -Destination "$TestDir\llm-limits-overlay32.exe" -Force
-    Copy-Item $CsExeSrc -Destination "$TestDir\LlmLimitsOverlay.exe" -Force
     if (Test-Path "$RepoRoot\assets\app.ico") {
         Copy-Item "$RepoRoot\assets\app.ico" -Destination "$TestDir\assets\app.ico" -Force
     }
@@ -119,37 +120,11 @@ try {
 
     # Reference limits.json: use the active data snapshot
     $sampleLimits = "$RepoRoot\limits.json"
-    if (Test-Path "$RepoRoot\dotnet\bin\limits.json") {
-        $sampleLimits = "$RepoRoot\dotnet\bin\limits.json"
-    }
     Copy-Item $sampleLimits -Destination "$TestDir\limits.json" -Force
 
     # Position: fixed bottom right
     $pos = @{ x = 1616; y = 626 }
     $pos | ConvertTo-Json | Set-Content "$TestDir\window.pos.json"
-
-    # --------------------------------------------------------------------------
-    # [Test 1] Launch C# Overlay and capture screenshot
-    # --------------------------------------------------------------------------
-    Write-Output "`n[Test 1] Launching C# Overlay (LlmLimitsOverlay.exe) on test limits.json..."
-    $csProc = Start-Process -FilePath "$TestDir\LlmLimitsOverlay.exe" -WorkingDirectory $TestDir -PassThru
-    Start-Sleep -Seconds 3
-
-    $csHwnd = [WinUtil]::FindOverlayWindow($csProc.Id)
-    Write-Output "C# Overlay HWND: $csHwnd (PID: $($csProc.Id))"
-
-    $csRect = New-Object WinUtil+RECT
-    [WinUtil]::GetWindowRect($csHwnd, [ref]$csRect) | Out-Null
-    $csW = $csRect.Right - $csRect.Left
-    $csH = $csRect.Bottom - $csRect.Top
-    Write-Output "C# Overlay Bounds: Left=$($csRect.Left), Top=$($csRect.Top), Width=$csW, Height=$csH"
-
-    $csShotPath = "$DistDir\stage5-cs.png"
-    [WinUtil]::CaptureWindow($csHwnd, $csShotPath)
-    Write-Output "Captured C# Screenshot: $csShotPath"
-
-    Stop-Process -Id $csProc.Id -Force
-    Start-Sleep -Seconds 1
 
     # --------------------------------------------------------------------------
     # [Test 2] Launch Go overlay32 and capture screenshot on EXACT SAME limits.json
@@ -371,8 +346,8 @@ try {
     Write-Output "=========================================================="
 
 } finally {
-    if ($wpfPath) {
-        Write-Output "`n[Cleanup] Restoring user's WPF overlay: $wpfPath"
-        Start-Process -FilePath $wpfPath
+    if ($restorableProc) {
+        Write-Output "`n[Cleanup] Restoring user's overlay: $restorableProc"
+        Start-Process -FilePath $restorableProc
     }
 }

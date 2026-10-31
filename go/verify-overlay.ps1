@@ -55,12 +55,12 @@ Add-Type -TypeDefinition $code
 
 Write-Output "=== Starting LLM Limits Overlay PoC Test ==="
 
-$wpfPath = $null
-$existingWpf = Get-Process LlmLimitsOverlay -ErrorAction SilentlyContinue
-if ($existingWpf) {
-    Write-Output "Temporarily suspending existing WPF overlay (PID $($existingWpf.Id)) to test global hotkey Ctrl+Alt+L..."
-    $wpfPath = $existingWpf.Path
-    Stop-Process -Id $existingWpf.Id -Force
+$existingOverlay = Get-Process -Name "llm-limits-overlay", "LlmLimitsOverlay" -ErrorAction SilentlyContinue
+$restorableOverlayPath = $null
+if ($existingOverlay) {
+    Write-Output "Temporarily suspending existing overlay (PID $($existingOverlay[0].Id)) to test global hotkey Ctrl+Alt+L..."
+    $restorableOverlayPath = $existingOverlay[0].Path
+    Stop-Process -Id $existingOverlay.Id -Force
     Start-Sleep -Seconds 1
 }
 
@@ -227,9 +227,9 @@ try {
     Write-Output "Terminating overlay process..."
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
     Write-Output "Overlay process stopped."
-    if ($wpfPath) {
-        Write-Output "Restoring WPF overlay from $wpfPath..."
-        Start-Process -FilePath $wpfPath
+    if ($restorableOverlayPath) {
+        Write-Output "Restoring overlay from $restorableOverlayPath..."
+        Start-Process -FilePath $restorableOverlayPath
         Start-Sleep -Seconds 1
     }
 }

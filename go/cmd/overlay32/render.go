@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Constants from OverlayTheme.cs
+// Constants for overlay design and typography
 const (
 	podCornerRadius = float32(8.0)
 	barHeight       = float32(5.5)
@@ -248,7 +248,6 @@ func (r *Renderer) drawCardBackground(x, y, w, h float32) {
 }
 
 // getProgressColor — линейная интерполяция между #4B5563 (used=0.0) и #111827 (used=1.0)
-// Полностью соответствует GetProgressBrush в OverlayTheme.cs
 func getProgressColor(usedFraction float64) uint32 {
 	if math.IsNaN(usedFraction) || usedFraction < 0.0 {
 		usedFraction = 0.0
@@ -320,7 +319,7 @@ func (r *Renderer) measureStringWidth(text string, font uintptr) float32 {
 	return bbox.Width
 }
 
-// formatResetTimeLabel — 1:1 аналог FormatResetTimeLabel из OverlayTheme.cs
+// formatResetTimeLabel форматирует время сброса в человекочитаемый вид
 func formatResetTimeLabel(resetIn string) string {
 	if resetIn == "" || resetIn == "--" || resetIn == "N/A" {
 		return "--"

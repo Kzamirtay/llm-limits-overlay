@@ -51,13 +51,13 @@ Write-Output "=========================================================="
 Write-Output "  LLM Limits Overlay32 (Win32 Native) - Stage 4 Test      "
 Write-Output "=========================================================="
 
-# Stop running WPF overlay to prevent hotkey/tray conflicts
-$runningWpf = Get-Process -Name "LlmLimitsOverlay" -ErrorAction SilentlyContinue
-$wpfPath = $null
-if ($runningWpf) {
-    $wpfPath = $runningWpf[0].Path
-    Write-Output "[Setup] Temporarily suspending running WPF overlay (PID $($runningWpf[0].Id)) to test Ctrl+Alt+L..."
-    Stop-Process -Id $runningWpf.Id -Force
+# Stop running overlay to prevent hotkey/tray conflicts
+$runningOverlays = Get-Process -Name "llm-limits-overlay", "llm-limits-overlay32", "LlmLimitsOverlay" -ErrorAction SilentlyContinue
+$restorableOverlayPath = $null
+if ($runningOverlays) {
+    $restorableOverlayPath = $runningOverlays[0].Path
+    Write-Output "[Setup] Temporarily suspending running overlay (PID $($runningOverlays[0].Id)) to test Ctrl+Alt+L..."
+    Stop-Process -Id $runningOverlays.Id -Force
     Start-Sleep -Seconds 1
 }
 
@@ -301,8 +301,8 @@ try {
     Write-Output "=========================================================="
 
 } finally {
-    if ($wpfPath) {
-        Write-Output "`n[Cleanup] Restoring user's WPF overlay: $wpfPath"
-        Start-Process -FilePath $wpfPath
+    if ($restorableOverlayPath) {
+        Write-Output "`n[Cleanup] Restoring user's overlay: $restorableOverlayPath"
+        Start-Process -FilePath $restorableOverlayPath
     }
 }

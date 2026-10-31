@@ -1,7 +1,7 @@
 param(
     [string]$TestDir = "C:\Users\User\AppData\Local\Temp\go_overlay_test",
     [string]$DistDir = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\go\dist",
-    [string]$CsCliPath = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\dotnet\bin\llm-limits.exe"
+    [string]$CsCliPath = ""
 )
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -45,13 +45,13 @@ Write-Output "=========================================================="
 Write-Output "  LLM Limits Overlay (Go/Wails) - Stage 3 Verification"
 Write-Output "=========================================================="
 
-# 0. Temporarily suspend existing WPF process to free up Ctrl+Alt+L hotkey
-$wpfPath = $null
-$existingWpf = Get-Process LlmLimitsOverlay -ErrorAction SilentlyContinue
-if ($existingWpf) {
-    Write-Output "[Setup] Temporarily suspending running WPF overlay (PID $($existingWpf.Id)) to test Ctrl+Alt+L..."
-    $wpfPath = $existingWpf.Path
-    Stop-Process -Id $existingWpf.Id -Force
+# 0. Temporarily suspend existing overlay process to free up Ctrl+Alt+L hotkey
+$existingOverlay = Get-Process -Name "llm-limits-overlay", "LlmLimitsOverlay" -ErrorAction SilentlyContinue
+$restorableOverlayPath = $null
+if ($existingOverlay) {
+    Write-Output "[Setup] Temporarily suspending running overlay (PID $($existingOverlay[0].Id)) to test Ctrl+Alt+L..."
+    $restorableOverlayPath = $existingOverlay[0].Path
+    Stop-Process -Id $existingOverlay.Id -Force
     Start-Sleep -Seconds 1
 }
 
@@ -306,9 +306,9 @@ try {
     Write-Output "=========================================================="
 
 } finally {
-    # Restore user's original background WPF process if it was running
-    if ($wpfPath) {
-        Write-Output "`n[Cleanup] Restoring user's WPF overlay: $wpfPath"
-        Start-Process -FilePath $wpfPath
+    # Restore user's original background overlay process if it was running
+    if ($restorableOverlayPath) {
+        Write-Output "`n[Cleanup] Restoring user's overlay: $restorableOverlayPath"
+        Start-Process -FilePath $restorableOverlayPath
     }
 }

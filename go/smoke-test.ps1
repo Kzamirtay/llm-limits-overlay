@@ -121,8 +121,8 @@ Remove-Item -Force $localSetup -ErrorAction SilentlyContinue
 Write-Host "[6/6] Verifying user production install is intact..."
 $userProdDir = "$env:LOCALAPPDATA\LlmLimitsOverlay"
 $userEnv = Join-Path $userProdDir ".env"
-$userOverlay = Join-Path $userProdDir "LlmLimitsOverlay.exe"
-if (-not (Test-Path $userEnv) -or -not (Test-Path $userOverlay)) {
+$hasUserExe = (Test-Path (Join-Path $userProdDir "llm-limits-overlay.exe")) -or (Test-Path (Join-Path $userProdDir "LlmLimitsOverlay.exe"))
+if (-not (Test-Path $userEnv) -or -not $hasUserExe) {
     throw "CRITICAL: User production directory was affected!"
 }
 Write-Host "  -> User production directory untouched and fully intact."

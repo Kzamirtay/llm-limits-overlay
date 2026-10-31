@@ -31,20 +31,19 @@ Add-Type -TypeDefinition $code
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 $DistDir = "$RepoRoot\go\dist"
-$DotnetBinDir = "$RepoRoot\dotnet\bin"
 
 Write-Output "=========================================================="
-Write-Output " LLM Limits Overlay - Performance Benchmark (C# vs Go)   "
+Write-Output " LLM Limits Overlay - Performance Benchmark               "
 Write-Output " Duration: $DurationSeconds seconds per variant           "
 Write-Output "=========================================================="
 
-# Check if a user background WPF overlay is running; record to restore later
-$wpfProc = Get-Process -Name "LlmLimitsOverlay" -ErrorAction SilentlyContinue
-$userWpfPath = $null
-if ($wpfProc) {
-    $userWpfPath = $wpfProc.Path
-    Write-Output "[Setup] Found user background WPF overlay (PID $($wpfProc.Id)). Suspending for test..."
-    Stop-Process -Id $wpfProc.Id -Force
+# Check if a user background overlay is running; record to restore later
+$overlayProc = Get-Process -Name "llm-limits-overlay", "LlmLimitsOverlay" -ErrorAction SilentlyContinue
+$userOverlayPath = $null
+if ($overlayProc) {
+    $userOverlayPath = $overlayProc[0].Path
+    Write-Output "[Setup] Found user background overlay (PID $($overlayProc[0].Id)). Suspending for test..."
+    Stop-Process -Id $overlayProc.Id -Force
     Start-Sleep -Seconds 1
 }
 
@@ -219,28 +218,34 @@ function Measure-AppVariant {
 }
 
 try {
-    # 1. Measure C# Overlay
-    $csResult = Measure-AppVariant `
-        -Name "C# / WPF (.NET 4.8)" `
-        -ExeSourcePath "$DotnetBinDir\LlmLimitsOverlay.exe" `
-        -TestFolderName "bench_cs_overlay"
+    # 1. Measure Go Native Win32 Layered Window
+    $nativeResult = $null
+    if (Test-Path "$DistDir\llm-limits-overlay.exe") {
+        $nativeResult = Measure-AppVariant `
+            -Name "Go Native Win32 (overlay32)" `
+            -ExeSourcePath "$DistDir\llm-limits-overlay.exe" `
+            -TestFolderName "bench_native_overlay"
+    }
 
-    # 2. Measure Go / Wails Overlay
-    $goResult = Measure-AppVariant `
-        -Name "Go / Wails v2 (WebView2)" `
-        -ExeSourcePath "$DistDir\llm-limits-overlay.exe" `
-        -TestFolderName "bench_go_overlay"
+    # 2. Measure Go / Wails Overlay (if present)
+    $wailsResult = $null
+    if (Test-Path "$DistDir\llm-limits-overlay-poc.exe") {
+        $wailsResult = Measure-AppVariant `
+            -Name "Go / Wails v2 (WebView2)" `
+            -ExeSourcePath "$DistDir\llm-limits-overlay-poc.exe" `
+            -TestFolderName "bench_wails_overlay"
+    }
 
     Write-Output "`n=========================================================================================="
     Write-Output "                        BENCHMARK RESULTS SUMMARY (60s RUN)                               "
     Write-Output "=========================================================================================="
     
-    $results = @($csResult, $goResult)
+    $results = @($nativeResult, $wailsResult) | Where-Object { $_ -ne $null }
     $results | Format-Table -Property Name, SizeMB, Open_MainWS, Open_ChildWS, Open_TotalWS, TotalCpuSec, Hide_TotalWS -AutoSize | Out-String | Write-Output
 
 } finally {
-    if ($userWpfPath) {
-        Write-Output "[Cleanup] Restoring original user WPF overlay: $userWpfPath"
-        Start-Process -FilePath $userWpfPath
+    if ($userOverlayPath) {
+        Write-Output "[Cleanup] Restoring original user overlay: $userOverlayPath"
+        Start-Process -FilePath $userOverlayPath
     }
 }

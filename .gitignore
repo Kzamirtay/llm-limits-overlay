@@ -11,11 +11,7 @@ overlay.log
 .env
 *.env
 
-# .NET build output
-dotnet/bin/
-dotnet/obj/
-bin/
-obj/
+# Executables
 *.exe
 
 # Installer output

@@ -59,31 +59,31 @@ The overlay presents information in three logical vertical cards from top to bot
      - **CLAUDE / GPT**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
    - Source: Native `agy.exe -p /usage --output-format json` (Antigravity CLI v1.4.9+).
 
-Each card shows its own **relative update time** in the bottom-right corner (`только что` = "just now", `N мин` = "N min ago"), recalculated every 10 seconds by the UI timer — no network requests. If a provider's block is `stale`, only its card gets the ` (stale)` suffix; the timestamp keeps showing the **last successful fetch** time and continues to age, so you can see how old the cached data really is. If a provider's API key is missing or is a placeholder (e.g. from `.env.example`), the card shows **нет ключа** instead of a time, and no HTTP request is made for that provider. The wording/format of these lines is defined by constants in `OverlayTheme.cs` (`RelativeTimeJustNow`, `RelativeTimeStaleSuffix`, `RelativeTimeNoKey`, etc.).
+Each card shows its own **relative update time** in the bottom-right corner (`только что` = "just now", `N мин` = "N min ago"), recalculated every 10 seconds by the UI timer — no network requests. If a provider's block is `stale`, only its card gets the ` (stale)` suffix; the timestamp keeps showing the **last successful fetch** time and continues to age, so you can see how old the cached data really is. If a provider's API key is missing or is a placeholder (e.g. from `.env.example`), the card shows **нет ключа** instead of a time, and no HTTP request is made for that provider. The wording/format of these lines is defined by constants in `go/cmd/overlay32/render.go` (`RelativeTimeJustNow`, `RelativeTimeStaleSuffix`, `RelativeTimeNoKey`, etc.).
 
 ---
 
 ## System Requirements
 
-- **OS**: Windows 10 or Windows 11 (64-bit) with .NET Framework 4.8 (included out of the box in Windows).
+- **OS**: Windows 10 or Windows 11 (64-bit). No WebView2, no .NET runtime required.
 - **Antigravity CLI**: `agy.exe` (v1.4.9+) installed and signed in (`agy auth login`). Resolved automatically from `PATH` or `%LOCALAPPDATA%\agy\bin\agy.exe`.
 - **No Python. No WSL.** Starting from v1.2.0 the overlay is fully self-contained.
 
 ---
 
-## Architecture (v1.2.0+)
+## Architecture (v2.0.0+)
 
 ### In-Process Fetch
 
-Since v1.2.0, quota fetching runs **entirely inside `LlmLimitsOverlay.exe`** with no external processes or scripts:
+Quota fetching runs **entirely inside `llm-limits-overlay.exe`** with no external processes or scripts:
 
 | Provider | Transport | Timeout | Auth |
 |---|---|---|---|
-| OpenRouter | `HttpWebRequest GET https://openrouter.ai/api/v1/key` | 3.5 s | Bearer `OPENROUTER_API_KEY` from `.env` |
-| Kimi | `HttpWebRequest GET https://api.kimi.com/coding/v1/usages` | 3.5 s | Bearer `KIMI_API_KEY` from `.env` |
-| AGY (Gemini/Claude) | `Process.Start(agy.exe -p /usage --output-format json)` | 8 s | OAuth token pre-checked at `%USERPROFILE%\.gemini\antigravity-cli\antigravity-oauth-token` |
+| OpenRouter | `http.Client GET https://openrouter.ai/api/v1/key` | 3.5 s | Bearer `OPENROUTER_API_KEY` from `.env` |
+| Kimi | `http.Client GET https://api.kimi.com/coding/v1/usages` | 3.5 s | Bearer `KIMI_API_KEY` from `.env` |
+| AGY (Gemini/Claude) | `exec.Command(agy.exe -p /usage --output-format json)` | 8 s | OAuth token pre-checked at `%USERPROFILE%\.gemini\antigravity-cli\antigravity-oauth-token` |
 
-All three providers run in parallel via `Task.Run`. Each atomically writes its fragment (`limits.agy.json`, `limits.openrouter.json`, `limits.kimi.json`) as soon as it finishes, then a merge step assembles the final `limits.json`. If one provider fails or times out, its block is marked `stale` while the others remain `online`.
+All providers run in parallel via goroutines. Each atomically writes its fragment (`limits.agy.json`, `limits.openrouter.json`, `limits.kimi.json`) as soon as it finishes, then a merge step assembles the final `limits.json`. If one provider fails or times out, its block is marked `stale` while the others remain `online`.
 
 ### OAuth Anti-Popup Guard
 
@@ -244,7 +244,7 @@ By default the overlay shows the built-in three: **KIMI**, **OPENROUTER**, **GEM
 To display OpenRouter and Kimi quota metrics, the overlay requires valid API keys.
 
 ### Key Loading Order
-API keys are read from the `.env` file located **next to `LlmLimitsOverlay.exe`** (highest priority), with fallback to process environment variables.
+API keys are read from the `.env` file located **next to `llm-limits-overlay.exe`** (highest priority), with fallback to process environment variables.
 
 > [!IMPORTANT]
 > Keys are **never** written to `overlay.log`, `limits.json`, or any cache file.
@@ -259,7 +259,7 @@ OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxx
 KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-The built-in C# parser supports:
+The built-in parser supports:
 - UTF-8 with or without BOM;
 - Both CRLF (Windows) and LF (Linux) line endings;
 - Blank lines and comments starting with `#`;
@@ -273,33 +273,31 @@ The built-in C# parser supports:
 
 ---
 
-## Architecture & Memory Comparison
+## Architecture & Memory Footprint
 
-Starting with version **2.0.0**, the primary production stack is pure **Go** (`CGO_ENABLED=0`):
-- **GUI Overlay (`llm-limits-overlay.exe`)**: A lightweight Always-on-Top HUD using native Win32 Layered Windows (`UpdateLayeredWindow` + 32-bit premultiplied ARGB DIB) and GDI+ rendering (`gdiplus.dll`). It requires no WebView2, no Chromium runtime, and zero external DLLs.
+Starting with version **2.0.0**, the project is implemented entirely in pure **Go** (`CGO_ENABLED=0`):
+- **GUI Overlay (`llm-limits-overlay.exe`)**: A lightweight Always-on-Top HUD using native Win32 Layered Windows (`UpdateLayeredWindow` + 32-bit premultiplied ARGB DIB) and GDI+ rendering (`gdiplus.dll`). It requires no WebView2, no Chromium runtime, no .NET runtime, and zero external DLLs.
 - **CLI (`llm-limits.exe` / `llm-limits-linux-x64`)**: Standalone static command-line tool with zero runtime dependencies.
-- **C# / .NET Reference (`dotnet/`)**: The original C# / WPF implementation is preserved as the benchmark and reference implementation (releases ≤ 1.4.1).
 
 ### Memory & Resource Footprint
 
 Measurements taken during active 60-second polling cycles on Windows 11 (64-bit):
 
-| Implementation | Stack | Memory (WorkingSet64) | Child Processes | Binary Size | Status in v2.0.0 |
+| Implementation | Stack | Memory (WorkingSet64) | Child Processes | Binary Size | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Go Win32 Native** | Go (`CGO_ENABLED=0`) + Win32 / GDI+ | **~31 MB** | **0** | **7.4 MB** | **Primary stack (v2.0.0+)** |
-| **C# / WPF** | C# (.NET Framework 4.8 / WPF) | **~66 MB** | **0** | ~130 KB (+ .NET 4.8) | Reference / benchmark (≤ 1.4.1) |
-| **Wails v2** | Go + WebKit / WebView2 | **~389 MB** | 4–6 (Chromium) | ~12 MB (+ WebView2) | Experimental |
+| **Wails v2** | Go + WebKit / WebView2 | **~389 MB** | 4–6 (Chromium) | ~12 MB (+ WebView2) | Experimental (archived) |
 
 ---
 
 ## Installation & Running
 
-The primary executable for the overlay in version 2.0.0+ is **`llm-limits-overlay.exe`**.
+The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
-> - **v2.0.0+**: Primary stack is pure Go (Win32 Native HUD + CLI). C# version preserved in `dotnet/` as the benchmark.
-> - **v1.1.0–v1.4.1**: C# / .NET Framework 4.8 / WPF standalone application (`LlmLimitsOverlay.exe`).
+> - **v2.0.0+**: Complete migration to pure Go (Win32 Native HUD + CLI). Zero external runtime dependencies.
+> - **v1.1.0–v1.4.1**: Legacy C# / .NET Framework 4.8 / WPF standalone application (`LlmLimitsOverlay.exe`). Sources remain accessible in git tags `≤ v1.4.1`.
 > - **v1.0.0**: PowerShell prototype (archived in git tag `v1.0.0`).
 
 ### Runtime Directory Requirements
@@ -335,12 +333,6 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-li
 # Linux CLI (llm-limits-linux-x64)
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limits-linux-x64 ./cmd/llm-limits
 ```
-
-To compile the legacy C# reference binary:
-```cmd
-dotnet\build.cmd
-```
-Produces `dotnet\bin\LlmLimitsOverlay.exe` via system `csc.exe`. Technical details are in [dotnet/README.md](dotnet/README.md).
 
 #### 3. Windows Installer (v2.0.0+)
 A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.0.0.exe` (Inno Setup 6).
@@ -409,20 +401,20 @@ llm-limits --watch 30
 #### 6. Go Native GUI Architecture (Win32 Layered Window)
 The v2.0.0 GUI (`llm-limits-overlay.exe`) is implemented in pure Go (`go/cmd/overlay32`) with zero CGO dependencies:
 - **Stack**: Pure Go (`CGO_ENABLED=0`), `UpdateLayeredWindow` with a 32-bit DIB section (BGRA, premultiplied alpha), GDI+ for anti-aliasing and typography, `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `HTCAPTION` drag).
-- **1:1 C# Parity**:
-  - Full adherence to `OverlayTheme.cs` styles (translucent frosted slate `#7CEEF2F6`, subtle border `#2064748B`, black titles `#000000`, label text `#0F172A`, stale/muted text `#475569`).
-  - Linear color interpolation for progress bars from `#4B5563` (0.0) to `#111827` (1.0).
+- **Design & Layout**:
+  - Translucent frosted slate backdrop (`#7CEEF2F6`), subtle border (`#2064748B`), black titles (`#000000`), slate label text (`#0F172A`), muted status text (`#475569`).
+  - Linear color interpolation for progress bars from neutral gray (`#4B5563`) to deep graphite (`#111827`).
   - Dynamic window height adapting to the number of configured providers (3 cards = 402px, 4 cards = 499px).
-  - Support for `no_key`, `stale`, per-card timers, and multiple keys per provider.
+  - Support for `no_key`, `stale`, per-card relative timers, and multiple keys per provider.
 - **Resource Footprint**:
-  - Memory (WorkingSet64): **~31 MB** (half of WPF's 66 MB, and 13x lighter than Wails' 389 MB).
+  - Memory (WorkingSet64): **~31 MB** (13x lighter than Wails' 389 MB).
   - Child Processes: **0** (no WebView2 / Chromium processes).
   - CPU (60s total): **~0.06s**.
   - Binary Size: **7.4 MB** (pure Go static executable, no CGO or MinGW required).
-- **Verification on Windows**: Automated test via `go/verify-stage5.ps1` runs side-by-side with the C# overlay on identical data, checks white/dark backdrop MD5 divergence, performs a 60-second memory benchmark, and verifies `no_key`, `stale`, and 4-card dynamic height scaling.
+- **Verification on Windows**: Automated test via `go/verify-stage5.ps1` checks white/dark backdrop MD5 divergence, performs a 60-second memory benchmark, and verifies `no_key`, `stale`, and dynamic height scaling.
 
 #### 7. Experimental Wails Overlay (Archived)
-An alternative Wails v2 (Go + WebView2) overlay lives in `go/cmd/overlay/`. While functional, it requires MinGW (`CGO_ENABLED=1`) and consumes ~389 MB WorkingSet due to Chromium processes. The pure Win32 layered window engine is chosen as the official v2.0.0 GUI.
+An alternative Wails v2 (Go + WebView2) overlay lives in `go/cmd/overlay/`. While functional, it requires MinGW (`CGO_ENABLED=1`) and consumes ~389 MB WorkingSet due to Chromium processes. The pure Win32 layered window engine is the official v2.0.0 GUI.
 
 ---
 
@@ -450,12 +442,14 @@ llm-limits-overlay/
 │   └── app.ico                  # Application icon (multi-resolution Win32 icon)
 ├── docs/
 │   └── screenshots/
-│       ├── dark.png             # Overlay on dark background
-│       └── light.png            # Overlay on light background
-├── dotnet/                      # C# source code (.NET Framework 4.8 / WPF)
-│   ├── LlmLimitsOverlay/        # C# source files (.cs)
-│   ├── build.cmd                # Standalone build script via csc.exe (no external SDK required)
-│   └── README.md                # Architecture documentation
+│       ├── dark.png             # Overlay on dark background (420px)
+│       └── light.png            # Overlay on light background (420px)
+├── go/                          # Pure Go source code (GUI + CLI)
+│   ├── cmd/
+│   │   ├── llm-limits/          # Terminal CLI source
+│   │   └── overlay32/           # Win32 Native Layered Window GUI source
+│   └── internal/                # Shared quota fetch engine & configuration
+├── installer/                   # Inno Setup 6 installer scripts
 ├── overlay.config.json          # Configuration file (auto-generated if missing)
 ├── .env.example                 # Template for API keys (OpenRouter, Kimi)
 ├── .gitignore                   # Git ignore patterns for caches, logs, and local state
