@@ -10,6 +10,9 @@ import (
 	"time"
 	"unsafe"
 
+	"llmlimits/internal/fetchers"
+
+	"github.com/wailsapp/go-webview2/webviewloader"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sys/windows"
 )
@@ -174,4 +177,17 @@ func positionBottomRight(ctx context.Context) {
 	fmt.Printf("position: screen %dx%d -> window (%d,%d)\n", w, h, x, y)
 
 	initPlatformWindow(windowTitle)
+}
+
+func checkWebView2Runtime(dir string) {
+	ver, err := webviewloader.GetAvailableCoreWebView2BrowserVersionString("")
+	if err != nil {
+		fetchers.LogLine(dir, fmt.Sprintf("[wails] WebView2 runtime check returned error: %v", err))
+		return
+	}
+	if ver == "" {
+		fetchers.LogLine(dir, "[wails] WebView2 runtime is NOT installed on this machine! Window cannot be displayed.")
+	} else {
+		fetchers.LogLine(dir, fmt.Sprintf("[wails] WebView2 runtime detected: version %s", ver))
+	}
 }

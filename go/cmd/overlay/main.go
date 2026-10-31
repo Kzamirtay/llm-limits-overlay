@@ -8,7 +8,10 @@ import (
 	"runtime"
 	"sync/atomic"
 
+	"llmlimits/internal/fetchers"
+
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/logger"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -24,6 +27,18 @@ var appIcon []byte
 
 var clickThrough atomic.Bool
 
+type overlayLogger struct {
+	appDir string
+}
+
+func (l *overlayLogger) Print(message string)   { fetchers.LogLine(l.appDir, "[wails] "+message) }
+func (l *overlayLogger) Trace(message string)   { fetchers.LogLine(l.appDir, "[wails:trace] "+message) }
+func (l *overlayLogger) Debug(message string)   { fetchers.LogLine(l.appDir, "[wails:debug] "+message) }
+func (l *overlayLogger) Info(message string)    { fetchers.LogLine(l.appDir, "[wails:info] "+message) }
+func (l *overlayLogger) Warning(message string) { fetchers.LogLine(l.appDir, "[wails:warn] "+message) }
+func (l *overlayLogger) Error(message string)   { fetchers.LogLine(l.appDir, "[wails:error] "+message) }
+func (l *overlayLogger) Fatal(message string)   { fetchers.LogLine(l.appDir, "[wails:fatal] "+message) }
+
 func main() {
 	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
 		fmt.Println("LLM Limits Overlay supports windows/linux only")
@@ -31,6 +46,10 @@ func main() {
 	}
 
 	initAppDir()
+	fetchers.LogLine(appDir, fmt.Sprintf("=== LLM Limits Overlay Starting (PID=%d) ===", os.Getpid()))
+
+	// Диагностика доступности WebView2 до старта Wails
+	checkWebView2Runtime(appDir)
 
 	// Win32-хоткей + click-through (только Windows)
 	if runtime.GOOS == "windows" {
@@ -50,6 +69,8 @@ func main() {
 		WindowStartState:  options.Normal,
 		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
 		Assets:            &assets,
+		Logger:            &overlayLogger{appDir: appDir},
+		LogLevel:          logger.INFO,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "llm-limits-overlay-instance-guid-52b36ded",
 			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
@@ -68,9 +89,14 @@ func main() {
 		Linux: linuxOptions(),
 		Bind:  []interface{}{},
 		OnStartup: func(ctx context.Context) {
+			fetchers.LogLine(appDir, "[wails] WebView2 initialized and window created.")
 			setWailsContext(ctx)
 		},
+		OnDomReady: func(ctx context.Context) {
+			fetchers.LogLine(appDir, "[wails] WebView2 DOM ready.")
+		},
 		OnShutdown: func(ctx context.Context) {
+			fetchers.LogLine(appDir, "=== LLM Limits Overlay Shutting Down ===")
 			if wailsCtx != nil {
 				x, y := wailsrt.WindowGetPosition(wailsCtx)
 				saveWindowPosition(appDir, x, y)
@@ -78,7 +104,9 @@ func main() {
 		},
 	})
 	if err != nil {
-		fmt.Println("wails error:", err)
+		msg := fmt.Sprintf("[wails] fatal startup error: %v", err)
+		fetchers.LogLine(appDir, msg)
+		fmt.Println(msg)
 		os.Exit(1)
 	}
 }

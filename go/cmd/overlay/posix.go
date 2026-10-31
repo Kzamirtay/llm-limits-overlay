@@ -25,3 +25,5 @@ func positionBottomRight(ctx context.Context) {
 }
 
 func initPlatformWindow(title string) {}
+
+func checkWebView2Runtime(dir string) {}
