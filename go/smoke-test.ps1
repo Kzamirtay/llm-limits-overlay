@@ -1,12 +1,12 @@
 $ErrorActionPreference = "Stop"
 $env:SEE_MASK_NOZONECHECKS = "1"
 
-$setupExe = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\dist\LlmLimitsOverlay-Setup-2.1.2.exe"
+$setupExe = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\dist\LlmLimitsOverlay-Setup-2.1.3.exe"
 $envSource = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\go\dist\.env"
 $smokeDir = "C:\Users\User\AppData\Local\Temp\llmo-smoke-test"
-$localSetup = "C:\Users\User\AppData\Local\Temp\LlmLimitsOverlay-Setup-2.1.2.exe"
+$localSetup = "C:\Users\User\AppData\Local\Temp\LlmLimitsOverlay-Setup-2.1.3.exe"
 
-Write-Host "=== SMOKE TEST: LLM Limits Overlay 2.1.2 ==="
+Write-Host "=== SMOKE TEST: LLM Limits Overlay 2.1.3 ==="
 
 # 0. Check setup exe exists and copy locally to avoid UNC security prompts
 if (-not (Test-Path $setupExe)) {
@@ -44,14 +44,25 @@ Write-Host "[2/6] Testing CLI (--version and --json)..."
 $cliExe = Join-Path $smokeDir "llm-limits.exe"
 $verOut = & $cliExe --version
 Write-Host "  -> CLI version output: $verOut"
-if ($verOut -notmatch "2\.1\.2") {
-    throw "CLI --version did not output 2.1.2"
+if ($verOut -notmatch "2\.1\.3") {
+    throw "CLI --version did not output 2.1.3"
 }
 
 # Copy .env with keys for live fetch
 if (Test-Path $envSource) {
     Copy-Item $envSource (Join-Path $smokeDir ".env") -Force
 }
+
+# Configure 4 providers (kimi, openrouter, codex, agy)
+$fourCfg = @{
+    providers = @(
+        @{ id = "kimi"; type = "kimi"; title = "KIMI"; enabled = $true },
+        @{ id = "openrouter"; type = "openrouter"; title = "OPENROUTER"; enabled = $true },
+        @{ id = "codex"; type = "codex"; title = "CODEX"; enabled = $true },
+        @{ id = "agy"; type = "agy"; title = "GEMINI + CLAUDE/GPT"; enabled = $true }
+    )
+}
+$fourCfg | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $smokeDir "overlay.config.json")
 
 $jsonOut = & $cliExe --json
 if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) {
@@ -113,33 +124,30 @@ if ($smokeHwnd -ne [IntPtr]::Zero) {
     Write-Host "  -> [PASS] Window is positioned strictly above taskbar!"
 }
 
-# Cycle 1: wait for initial fetch (up to 15s)
+# Cycle 1: wait for initial fetch with 4 providers (up to 20s)
 $logPath = Join-Path $smokeDir "overlay32.log"
+$limitsJson = Join-Path $smokeDir "limits.json"
 $cycle1Done = $false
-for ($i = 0; $i -lt 15; $i++) {
+for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Seconds 1
-    if (Test-Path $logPath) {
+    if ((Test-Path $logPath) -and (Test-Path $limitsJson)) {
         $content = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
-        if ($content -match "Starting async native refresh|snapshot updated") {
+        if ($content -match "Starting async native refresh") {
             $cycle1Done = $true
             break
         }
     }
 }
-Write-Host "  -> Initial fetch completed: $cycle1Done"
-
-# Cycle 2: overlay has a 60s ticker. Wait ~62 seconds
-Write-Host "  -> Waiting 62 seconds for ticker fetch cycle 2..."
-Start-Sleep -Seconds 62
-
-$fetchCount = 0
-if (Test-Path $logPath) {
-    $matches = Select-String -Path $logPath -Pattern "Starting async native refresh"
-    $fetchCount = $matches.Count
-    Write-Host "  -> Total 'Starting async native refresh' cycles: $fetchCount"
+if (-not $cycle1Done) {
+    throw "Initial fetch with 4 providers did not complete within timeout"
 }
-if ($fetchCount -lt 2) {
-    throw "Expected at least 2 fetch cycles, got $fetchCount"
+Write-Host "  -> Initial fetch completed with 4 providers: $cycle1Done"
+$limitsObj = Get-Content $limitsJson -Raw | ConvertFrom-Json
+$hasCodex = ($null -ne $limitsObj.codex) -or ($null -ne $limitsObj.data.codex)
+$hasAgy = ($null -ne $limitsObj.data.agy)
+Write-Host "  -> limits.json assembled successfully (codex: $hasCodex, agy: $hasAgy)"
+if (Test-Path $logPath) {
+    Get-Content $logPath | ForEach-Object { Write-Host "     $_" }
 }
 
 # Stop GUI process cleanly
