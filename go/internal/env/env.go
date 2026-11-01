@@ -2,6 +2,7 @@ package env
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,15 +38,16 @@ func NewParser(envPath string) *Parser {
 	if envPath == "" {
 		return p
 	}
-	f, err := os.Open(envPath)
+	raw, err := os.ReadFile(envPath)
 	if err != nil {
 		return p
 	}
-	defer f.Close()
+	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
 
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(raw))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
+		line = strings.TrimPrefix(line, "\ufeff")
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -60,6 +62,7 @@ func NewParser(envPath string) *Parser {
 			continue
 		}
 		key := strings.TrimSpace(line[:eq])
+		key = strings.TrimPrefix(key, "\ufeff")
 		if key == "" {
 			continue
 		}

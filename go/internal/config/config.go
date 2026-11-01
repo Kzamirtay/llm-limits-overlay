@@ -1,11 +1,43 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
+	"sync"
 )
+
+var (
+	logMu   sync.Mutex
+	logFunc = func(msg string) {
+		log.Println(msg)
+	}
+)
+
+// SetLogFunc переопределяет функцию логирования для модуля config.
+func SetLogFunc(fn func(string)) {
+	logMu.Lock()
+	defer logMu.Unlock()
+	logFunc = fn
+}
+
+// Log отправляет сообщение в текущий логгер.
+func Log(msg string) {
+	logMu.Lock()
+	fn := logFunc
+	logMu.Unlock()
+	if fn != nil {
+		fn(msg)
+	}
+}
+
+// StripBOM срезает UTF-8 BOM (\xef\xbb\xbf), если он есть в начале среза байт.
+func StripBOM(b []byte) []byte {
+	return bytes.TrimPrefix(b, []byte("\xef\xbb\xbf"))
+}
 
 // Provider — запись из overlay.config.json ("providers": [...]).
 // Только явные типы: kimi | openrouter | agy. Неизвестный type пропускается.
@@ -59,12 +91,20 @@ func Load(path string) *Config {
 		ClickThrough:       true,
 		ClickThroughHotkey: "Ctrl+Alt+L",
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if path == "" {
 		return cfg
 	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			Log(fmt.Sprintf("[config] parse error in %s: %v, using defaults", path, err))
+		}
+		return cfg
+	}
+	raw = StripBOM(raw)
 	var root map[string]interface{}
 	if err := json.Unmarshal(raw, &root); err != nil {
+		Log(fmt.Sprintf("[config] parse error in %s: %v, using defaults", path, err))
 		return cfg
 	}
 	if v, ok := root["timeoutSeconds"].(float64); ok {
@@ -90,6 +130,7 @@ func (c *Config) SaveClickThrough(enabled bool) {
 	raw, err := os.ReadFile(c.Path)
 	var root map[string]interface{}
 	if err == nil {
+		raw = StripBOM(raw)
 		_ = json.Unmarshal(raw, &root)
 	}
 	if root == nil {
@@ -123,7 +164,7 @@ func parseProviders(list []interface{}) []Provider {
 		switch p.Type {
 		case "kimi", "openrouter", "agy", "codex":
 		default:
-			log.Printf("[config] providers: неизвестный type '%s' у записи '%s' — запись пропущена (новый провайдер = новый тип в коде)", p.Type, p.Id)
+			Log(fmt.Sprintf("[config] providers: неизвестный type '%s' у записи '%s' — запись пропущена (новый провайдер = новый тип в коде)", p.Type, p.Id))
 			continue
 		}
 		p.Title = getStr(d, "title")

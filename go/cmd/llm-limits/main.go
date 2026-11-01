@@ -58,6 +58,9 @@ func run(args []string) int {
 		exe = os.Args[0]
 	}
 	appDir := filepath.Dir(exe)
+	config.SetLogFunc(func(msg string) {
+		fetchers.LogLine(appDir, msg)
+	})
 
 	cfgPath := opt.configPath
 	if cfgPath == "" {

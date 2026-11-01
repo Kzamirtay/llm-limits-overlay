@@ -66,6 +66,9 @@ func initAppDir() {
 	}
 	appDir = filepath.Dir(exe)
 	fetchers.SetLogFileName("overlay32.log")
+	config.SetLogFunc(func(msg string) {
+		fetchers.LogLine(appDir, msg)
+	})
 	cfgPath := filepath.Join(appDir, "overlay.config.json")
 	cfg = config.Load(cfgPath)
 
@@ -158,6 +161,7 @@ func loadWindowPosition(h int32) (int32, int32) {
 	posPath := filepath.Join(appDir, "window.pos.json")
 	raw, err := os.ReadFile(posPath)
 	if err == nil {
+		raw = config.StripBOM(raw)
 		var pos WindowPosition
 		if json.Unmarshal(raw, &pos) == nil && (pos.X != 0 || pos.Y != 0) {
 			isUserPositioned = true
