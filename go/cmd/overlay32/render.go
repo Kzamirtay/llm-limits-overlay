@@ -114,7 +114,7 @@ func NewRenderer(w, h int32) (*Renderer, error) {
 	var g uintptr
 	procGdipGetImageGraphicsContext.Call(gpBitmap, uintptr(unsafe.Pointer(&g)))
 	procGdipSetSmoothingMode.Call(g, SmoothingModeAntiAlias)
-	procGdipSetTextRenderingHint.Call(g, TextRenderingHintClearType)
+	procGdipSetTextRenderingHint.Call(g, TextRenderingHintAntiAliasGridFit)
 
 	// Fonts: Segoe UI
 	var family uintptr

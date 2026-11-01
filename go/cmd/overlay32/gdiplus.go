@@ -156,9 +156,9 @@ const (
 	PixelFormat32bppPARGB = 0x000E200B // Premultiplied 32-bit ARGB
 
 	// GDI+ Smoothing and Text hints
-	SmoothingModeAntiAlias       = 4
-	TextRenderingHintAntiAlias   = 4
-	TextRenderingHintClearType   = 5
+	SmoothingModeAntiAlias            = 4
+	TextRenderingHintAntiAliasGridFit = 3
+	TextRenderingHintAntiAlias        = 4
 
 	// GDI+ Units
 	UnitPixel = 2
