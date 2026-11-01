@@ -1,12 +1,12 @@
 $ErrorActionPreference = "Stop"
 $env:SEE_MASK_NOZONECHECKS = "1"
 
-$setupExe = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\dist\LlmLimitsOverlay-Setup-2.1.1.exe"
+$setupExe = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\dist\LlmLimitsOverlay-Setup-2.1.2.exe"
 $envSource = "\\wsl.localhost\Ubuntu-22.04\home\kzamirtay\agy-limits-overlay\go\dist\.env"
 $smokeDir = "C:\Users\User\AppData\Local\Temp\llmo-smoke-test"
-$localSetup = "C:\Users\User\AppData\Local\Temp\LlmLimitsOverlay-Setup-2.1.1.exe"
+$localSetup = "C:\Users\User\AppData\Local\Temp\LlmLimitsOverlay-Setup-2.1.2.exe"
 
-Write-Host "=== SMOKE TEST: LLM Limits Overlay 2.1.1 ==="
+Write-Host "=== SMOKE TEST: LLM Limits Overlay 2.1.2 ==="
 
 # 0. Check setup exe exists and copy locally to avoid UNC security prompts
 if (-not (Test-Path $setupExe)) {
@@ -44,8 +44,8 @@ Write-Host "[2/6] Testing CLI (--version and --json)..."
 $cliExe = Join-Path $smokeDir "llm-limits.exe"
 $verOut = & $cliExe --version
 Write-Host "  -> CLI version output: $verOut"
-if ($verOut -notmatch "2\.1\.1") {
-    throw "CLI --version did not output 2.1.1"
+if ($verOut -notmatch "2\.1\.2") {
+    throw "CLI --version did not output 2.1.2"
 }
 
 # Copy .env with keys for live fetch
