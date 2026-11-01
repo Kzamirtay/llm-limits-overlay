@@ -24,9 +24,9 @@ type Options struct {
 // пишет limits.json и фрагменты; возвращает снимок.
 func FetchAll(cfg *config.Config, opts Options) *model.Snapshot {
 	appDir := opts.AppDir
-	envPath := opts.EnvPath
-	if envPath == "" {
-		envPath = filepath.Join(appDir, ".env")
+	envPath := env.ResolveEnvPath(appDir, opts.EnvPath)
+	if _, err := os.Stat(envPath); err != nil {
+		LogLine(appDir, "[env] .env file not found: "+envPath)
 	}
 	ep := env.NewParser(envPath)
 	nowIso := NowIso()

@@ -246,7 +246,7 @@ By default the overlay shows the built-in three: **KIMI**, **OPENROUTER**, **GEM
 To display OpenRouter and Kimi quota metrics, the overlay requires valid API keys.
 
 ### Key Loading Order
-API keys are read from the `.env` file located **next to `llm-limits-overlay.exe`** (highest priority), with fallback to process environment variables.
+Linux: keys are read from `~/.config/llm-limits/.env` (or via `--env`); Windows: `.env` next to exe (with fallback to process environment variables).
 
 > [!IMPORTANT]
 > Keys are **never** written to `overlay.log`, `limits.json`, or any cache file.

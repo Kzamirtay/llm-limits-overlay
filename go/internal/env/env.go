@@ -3,8 +3,28 @@ package env
 import (
 	"bufio"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
+
+// ResolveEnvPath определяет путь к .env файлу:
+// - Если задан explicit (--env) — берётся он.
+// - Windows: .env рядом с exe (appDir/.env).
+// - Linux/macOS: ТОЛЬКО $HOME/.config/llm-limits/.env (рядом с бинарником на Unix не ищется).
+func ResolveEnvPath(appDir, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if runtime.GOOS == "windows" {
+		return filepath.Join(appDir, ".env")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".config", "llm-limits", ".env")
+}
 
 // Parser читает .env (кавычки, inline-комментарии, export-префикс),
 // с fallback на переменные окружения процесса.
