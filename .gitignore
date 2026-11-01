@@ -35,6 +35,3 @@ Desktop.ini
 
 # Go CLI build output
 go/dist/
-build/
-go/cmd/overlay/build/
-go/cmd/overlay/frontend/wailsjs/

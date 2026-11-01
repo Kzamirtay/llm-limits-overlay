@@ -286,7 +286,9 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | Реализация | Стек | Память (WorkingSet64) | Дочерние процессы | Размер бинарника | Примечание |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Go Win32 Native** | Go (`CGO_ENABLED=0`) + Win32 / GDI+ | **~31 МБ** | **0** | **7.4 МБ** | **Основной стек (v2.0.0+)** |
-| **Wails v2** | Go + WebKit / WebView2 | **~389 МБ** | 4–6 (Chromium) | ~12 МБ (+ WebView2) | Экспериментальный (архив) |
+
+> [!NOTE]
+> PoC на Wails был отвергнут: WebView2 даёт ~389 МБ RAM; используется Win32+GDI+.
 
 ---
 
@@ -397,7 +399,7 @@ llm-limits --watch 30
 - Ключи читаются из `.env` **рядом с бинарником** (либо `--env <путь>`).
 - Карточка Gemini/Claude требует нативный Linux-бинарник `agy`: ищется в `LLM_LIMITS_AGY_BIN`, затем `PATH`, затем `~/.local/bin/agy`, `/usr/local/bin/agy`. OAuth-токен читается из `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Остальное (Kimi, OpenRouter) работает без `agy`.
-- **Примечание о GUI под Linux**: Нативный HUD-оверлей использует подсистему Win32 Layered Windows и GDI+ (`user32.dll`, `gdiplus.dll`) и работает только в Windows. Под Linux собрать GUI без cgo невозможно (Wails требует cgo и библиотеки WebKit2GTK / GTK3). Поэтому поддержка Linux официально осуществляется через автономный статический CLI `llm-limits-linux-x64`.
+- **Примечание о GUI под Linux**: Нативный HUD-оверлей использует подсистему Win32 Layered Windows и GDI+ (`user32.dll`, `gdiplus.dll`) и работает только в Windows. Поэтому поддержка Linux официально осуществляется через автономный статический CLI `llm-limits-linux-x64`.
 
 #### 6. Архитектура Go Native GUI (Win32 Layered Window)
 GUI версии 2.0.0 (`llm-limits-overlay.exe`) реализован на чистом Go (`go/cmd/overlay32`) без cgo:
@@ -408,14 +410,11 @@ GUI версии 2.0.0 (`llm-limits-overlay.exe`) реализован на чи
   - Динамическая высота окна по числу карточек в `overlay.config.json` (3 карточки = 402px, 4 карточки = 499px).
   - Поддержка `no_key`, `stale`, per-card таймингов и нескольких ключей одного провайдера.
 - **Потребление ресурсов**:
-  - Память (WorkingSet64): **~31 МБ** (в 13 раз меньше, чем у Wails 389 МБ).
+  - Память (WorkingSet64): **~31 МБ** (в 13 раз меньше, чем у Wails PoC ~389 МБ).
   - Дочерние процессы: **0** (нет процессов WebView2 / Chromium).
   - CPU за 60с: **~0.06с**.
   - Размер exe: **7.4 МБ** (чистый Go без cgo).
 - **Проверка на Windows**: Автоматизированный скрипт `go/verify-stage5.ps1` проводит сквозную приёмку: проверка различия MD5 на белой и тёмной подложке, 60-секундный бенчмарк памяти, проверка состояний `no_key`, `stale` и динамической высоты.
-
-#### 7. Экспериментальный оверлей на Wails (Архив)
-Альтернативная версия на Wails v2 (Go + WebView2) находится в `go/cmd/overlay/`. Она полностью функциональна, однако требует MinGW (`CGO_ENABLED=1`) и расходует ~389 МБ RAM из-за процессов Chromium. В качестве официального GUI версии 2.0.0 выбран чистый Win32 Layered Window.
 
 ---
 

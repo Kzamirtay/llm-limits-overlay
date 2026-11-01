@@ -288,7 +288,9 @@ Measurements taken during active 60-second polling cycles on Windows 11 (64-bit)
 | Implementation | Stack | Memory (WorkingSet64) | Child Processes | Binary Size | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Go Win32 Native** | Go (`CGO_ENABLED=0`) + Win32 / GDI+ | **~31 MB** | **0** | **7.4 MB** | **Primary stack (v2.0.0+)** |
-| **Wails v2** | Go + WebKit / WebView2 | **~389 MB** | 4–6 (Chromium) | ~12 MB (+ WebView2) | Experimental (archived) |
+
+> [!NOTE]
+> The Wails PoC was abandoned: WebView2 consumes ~389 MB RAM; Win32+GDI+ is used instead.
 
 ---
 
@@ -400,7 +402,7 @@ llm-limits --watch 30
 - Keys are read from `.env` **next to the binary** (or `--env <path>`).
 - The Gemini/Claude card requires the native Linux `agy` binary: resolved from `LLM_LIMITS_AGY_BIN`, `PATH`, `~/.local/bin/agy`, `/usr/local/bin/agy`. The OAuth token is read from `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Everything else (Kimi, OpenRouter) works without `agy`.
-- **Linux GUI Support Note**: The native HUD overlay uses Win32 Layered Windows and GDI+ APIs (`user32.dll`, `gdiplus.dll`) and is Windows-specific. On Linux, a GUI cannot be compiled without cgo (Wails requires cgo and WebKit2GTK / GTK3 development headers). Therefore, Linux is officially supported via the standalone static CLI (`llm-limits-linux-x64`).
+- **Linux GUI Support Note**: The native HUD overlay uses Win32 Layered Windows and GDI+ APIs (`user32.dll`, `gdiplus.dll`) and is Windows-specific. Therefore, Linux is officially supported via the standalone static CLI (`llm-limits-linux-x64`).
 
 #### 6. Go Native GUI Architecture (Win32 Layered Window)
 The v2.0.0 GUI (`llm-limits-overlay.exe`) is implemented in pure Go (`go/cmd/overlay32`) with zero CGO dependencies:
@@ -411,14 +413,11 @@ The v2.0.0 GUI (`llm-limits-overlay.exe`) is implemented in pure Go (`go/cmd/ove
   - Dynamic window height adapting to the number of configured providers (3 cards = 402px, 4 cards = 499px).
   - Support for `no_key`, `stale`, per-card relative timers, and multiple keys per provider.
 - **Resource Footprint**:
-  - Memory (WorkingSet64): **~31 MB** (13x lighter than Wails' 389 MB).
+  - Memory (WorkingSet64): **~31 MB** (13x lighter than Wails PoC ~389 MB).
   - Child Processes: **0** (no WebView2 / Chromium processes).
   - CPU (60s total): **~0.06s**.
   - Binary Size: **7.4 MB** (pure Go static executable, no CGO or MinGW required).
 - **Verification on Windows**: Automated test via `go/verify-stage5.ps1` checks white/dark backdrop MD5 divergence, performs a 60-second memory benchmark, and verifies `no_key`, `stale`, and dynamic height scaling.
-
-#### 7. Experimental Wails Overlay (Archived)
-An alternative Wails v2 (Go + WebView2) overlay lives in `go/cmd/overlay/`. While functional, it requires MinGW (`CGO_ENABLED=1`) and consumes ~389 MB WorkingSet due to Chromium processes. The pure Win32 layered window engine is the official v2.0.0 GUI.
 
 ---
 
