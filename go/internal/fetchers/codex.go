@@ -117,6 +117,7 @@ func FetchCodex(appDir string, p config.Provider) map[string]interface{} {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, codexBin, "app-server")
+	hideConsole(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		LogLine(appDir, "["+id+"] stdin pipe error: "+err.Error())

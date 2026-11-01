@@ -315,6 +315,7 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "-p", "/usage", "--output-format", "json")
+	hideConsole(cmd)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
