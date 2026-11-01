@@ -214,22 +214,25 @@
     { "id": "openrouter", "type": "openrouter", "title": "OPENROUTER", "apiKeyEnv": "OPENROUTER_API_KEY" },
     { "id": "or2", "type": "openrouter", "title": "OPENROUTER 2", "apiKeyEnv": "OPENROUTER_API_KEY_2" },
     { "id": "kimi2", "type": "kimi", "title": "KIMI 2", "apiKeyEnv": "KIMI_API_KEY_2" },
+    { "id": "codex", "type": "codex", "title": "CODEX" },
     { "id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT" }
   ]
 }
 ```
 
 - `id`: уникальный ключ — блок провайдера в `limits.json` лежит как `data.<id>` (обратная совместимость: `kimi`/`openrouter` сохраняют прежний формат).
-- `type`: `kimi` (окна 5ч/7д из `{baseUrl или https://api.kimi.com/coding/v1}/usages`) | `openrouter` (кредиты + free-пул из `{baseUrl или https://openrouter.ai/api/v1}/key`) | `agy` (нативный `agy.exe`). **Неизвестный type пропускается с предупреждением в логе — новый провайдер = новый тип в коде.**
+- `type`: `kimi` (окна 5ч/7д из `{baseUrl или https://api.kimi.com/coding/v1}/usages`) | `openrouter` (кредиты + free-пул из `{baseUrl или https://openrouter.ai/api/v1}/key`) | `agy` (нативный `agy.exe`) | `codex` (лимиты ChatGPT Codex CLI через локальный `codex app-server`). **Неизвестный type пропускается с предупреждением в логе — новый провайдер = новый тип в коде.**
 - `title`: заголовок карточки.
-- `apiKeyEnv`: имя переменной в `.env`/окружении с ключом. Несколько записей одного типа = несколько карточек со своими ключами (`apiKey` инлайн тоже допустим, но лучше `apiKeyEnv` — инлайн-ключ окажется в файле конфигурации).
+- `apiKeyEnv`: имя переменной в `.env`/окружении с ключом. Для `codex` и `agy` ключ не требуется. Несколько записей одного типа = несколько карточек со своими ключами (`apiKey` инлайн тоже допустим, но лучше `apiKeyEnv` — инлайн-ключ окажется в файле конфигурации).
 - `enabled: false` — карточка скрыта.
 - `baseUrl` *(опционально)*: переопределение эндпоинта для прокси/зеркала (обычно не нужно).
+- **Провайдер Codex**: работает через запуск локального `codex app-server` (stdio JSON-RPC, метод `account/rateLimits/read`). Не обращается к внешним refresh-эндпоинтам и не обновляет OAuth-токены напрямую. Требует установленный Codex CLI и выполненный вход (`codex login`). По умолчанию бинарник ищется в `PATH`, `~/.local/node/bin/codex` и `~/.local/node-v*/bin/codex`; при необходимости путь задаётся через `LLM_LIMITS_CODEX_BIN`.
 - Полей `quota`/`probe` нет — каждый тип сохраняет свою логику фетча как есть.
-- Если `providers` отсутствует — используются встроенные дефолты, старый конфиг работает без правки.
+- Если `providers` отсутствует — используются встроенные дефолты (`kimi`, `openrouter`, `agy`), старый конфиг работает без правки.
 
 ### Переменные окружения
 
+- `LLM_LIMITS_CODEX_BIN`: явный путь к бинарнику `codex` (CLI).
 - `LLM_LIMITS_AGY_BIN`: явный путь к `agy.exe`.
 - `LLM_LIMITS_QUOTA_CACHE_SECONDS`: время кэширования квот Antigravity (по умолчанию `300`).
 - `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: путь для выгрузки результирующего кэша JSON.

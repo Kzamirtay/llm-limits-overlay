@@ -28,15 +28,29 @@ type OpenRouterInfo struct {
 	FreeDailyLimit int
 }
 
+type CodexInfo struct {
+	Status        string
+	LastUpdated   string
+	PlanType      string
+	Balance       string
+	Primary       Bucket
+	PrimaryName   string
+	PrimaryMin    int
+	Secondary     *Bucket
+	SecondaryName string
+	SecondaryMin  int
+}
+
 // ProviderState — состояние одного провайдера (включая кастомные id).
 type ProviderState struct {
 	Id          string
 	Title       string
-	Kind        string // kimi | openrouter | agy
+	Kind        string // kimi | openrouter | agy | codex
 	Status      string
 	LastUpdated string
 	Kimi        *KimiInfo
 	OpenRouter  *OpenRouterInfo
+	Codex       *CodexInfo
 }
 
 // Snapshot — результат одного цикла фетча.

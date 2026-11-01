@@ -74,8 +74,15 @@ func run(args []string) int {
 			}
 		}
 		if !found {
-			fmt.Fprintf(os.Stderr, "llm-limits: unknown provider id '%s' (check overlay.config.json providers).\n", opt.provider)
-			return 1
+			if strings.EqualFold(opt.provider, "codex") {
+				codexP := config.Provider{Id: "codex", Type: "codex", Title: "CODEX", Enabled: true}
+				providers = append(providers, codexP)
+				cfg.Providers = append(cfg.Providers, codexP)
+				found = true
+			} else {
+				fmt.Fprintf(os.Stderr, "llm-limits: unknown provider id '%s' (check overlay.config.json providers).\n", opt.provider)
+				return 1
+			}
 		}
 	}
 
@@ -202,7 +209,21 @@ func fetchOnce(opt *options, cfg *config.Config, appDir string) *model.Snapshot 
 	if budgetSec > 0 && int(budgetSec*1000) < (timeout+5)*1000 {
 		budgetMs = int(budgetSec * 1000)
 	}
-	return fetchers.FetchAll(cfg, fetchers.Options{
+	effectiveCfg := cfg
+	if opt.provider != "" {
+		effectiveCfg = &config.Config{
+			Path:               cfg.Path,
+			TimeoutSec:         cfg.TimeoutSec,
+			ClickThrough:       cfg.ClickThrough,
+			ClickThroughHotkey: cfg.ClickThroughHotkey,
+		}
+		for _, p := range cfg.EffectiveProviders() {
+			if strings.EqualFold(p.Id, opt.provider) {
+				effectiveCfg.Providers = append(effectiveCfg.Providers, p)
+			}
+		}
+	}
+	return fetchers.FetchAll(effectiveCfg, fetchers.Options{
 		AppDir:        appDir,
 		EnvPath:       opt.envPath,
 		AgyTimeoutSec: timeout,
@@ -296,6 +317,23 @@ func render(opt *options, snap *model.Snapshot) {
 			fmt.Printf("       %s  reset %s  free %d/%d  rem. $%s\n",
 				pct, safe(or.ResetIn), or.FreeDailyUsed, or.FreeDailyLimit,
 				fmt.Sprintf("%.2f", or.LimitRemaining))
+		case "codex":
+			if st.Codex == nil {
+				continue
+			}
+			renderHeader(p.Title, st.Status, st.LastUpdated)
+			label := st.Codex.PrimaryName
+			if label == "" {
+				label = "30д"
+			}
+			renderBucket("  "+label, st.Codex.Primary)
+			if st.Codex.Secondary != nil {
+				secLabel := st.Codex.SecondaryName
+				if secLabel == "" {
+					secLabel = "secondary"
+				}
+				renderBucket("  "+secLabel, *st.Codex.Secondary)
+			}
 		default: // kimi
 			if st.Kimi == nil {
 				continue
@@ -431,6 +469,28 @@ func buildPayload(opt *options, snap *model.Snapshot) map[string]interface{} {
 				"free_daily_used":  or.FreeDailyUsed,
 				"free_daily_limit": or.FreeDailyLimit,
 			}
+		case "codex":
+			if st.Codex == nil {
+				continue
+			}
+			cx := st.Codex
+			m := map[string]interface{}{
+				"status":       st.Status,
+				"last_updated": st.LastUpdated,
+				"plan_type":    cx.PlanType,
+				"balance":      cx.Balance,
+				"primary":      bucketJson(cx.Primary),
+			}
+			if cx.PrimaryName != "" {
+				m["primary_name"] = cx.PrimaryName
+			}
+			if cx.Secondary != nil {
+				m["secondary"] = bucketJson(*cx.Secondary)
+				if cx.SecondaryName != "" {
+					m["secondary_name"] = cx.SecondaryName
+				}
+			}
+			pr[p.Id] = m
 		default:
 			if st.Kimi == nil {
 				continue
@@ -519,7 +579,7 @@ func isTTY() bool {
 }
 
 func printHelp() {
-	fmt.Println("llm-limits 2.0.1 - LLM quota status in the terminal (Kimi / OpenRouter / Gemini+Claude-GPT)")
+	fmt.Println("llm-limits 2.0.1 - LLM quota status in the terminal (Kimi / OpenRouter / Gemini+Claude-GPT / Codex)")
 	fmt.Println()
 	fmt.Println("Usage: llm-limits [options]")
 	fmt.Println()

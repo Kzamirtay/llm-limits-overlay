@@ -216,22 +216,25 @@ By default the overlay shows the built-in three: **KIMI**, **OPENROUTER**, **GEM
     { "id": "openrouter", "type": "openrouter", "title": "OPENROUTER", "apiKeyEnv": "OPENROUTER_API_KEY" },
     { "id": "or2", "type": "openrouter", "title": "OPENROUTER 2", "apiKeyEnv": "OPENROUTER_API_KEY_2" },
     { "id": "kimi2", "type": "kimi", "title": "KIMI 2", "apiKeyEnv": "KIMI_API_KEY_2" },
+    { "id": "codex", "type": "codex", "title": "CODEX" },
     { "id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT" }
   ]
 }
 ```
 
 - `id`: unique key — the provider block in `limits.json` is stored as `data.<id>` (backward compatible: `kimi`/`openrouter` keep their legacy shapes).
-- `type`: `kimi` (Kimi windows 5h/7d from `{baseUrl or https://api.kimi.com/coding/v1}/usages`) | `openrouter` (credits + free pool from `{baseUrl or https://openrouter.ai/api/v1}/key`) | `agy` (native `agy.exe`). **Unknown types are skipped with a warning in the log — a new provider means a new type in code.**
+- `type`: `kimi` (Kimi windows 5h/7d from `{baseUrl or https://api.kimi.com/coding/v1}/usages`) | `openrouter` (credits + free pool from `{baseUrl or https://openrouter.ai/api/v1}/key`) | `agy` (native `agy.exe`) | `codex` (ChatGPT Codex CLI quotas via local `codex app-server`). **Unknown types are skipped with a warning in the log — a new provider means a new type in code.**
 - `title`: card header text.
-- `apiKeyEnv`: name of the variable in `.env`/environment holding the key. Several entries of the same type = several cards with their own keys (`apiKey` inline is also supported, but prefer `apiKeyEnv` — inline keys end up in the config file).
+- `apiKeyEnv`: name of the variable in `.env`/environment holding the key. Not needed for `codex` or `agy`. Several entries of the same type = several cards with their own keys (`apiKey` inline is also supported, but prefer `apiKeyEnv` — inline keys end up in the config file).
 - `enabled: false` — card hidden.
 - `baseUrl` *(optional)*: endpoint override for a proxy/mirror (usually not needed).
+- **Codex Provider**: works by querying the local `codex app-server` (stdio JSON-RPC, `account/rateLimits/read` method). Does not query external refresh endpoints or modify OAuth tokens directly. Requires Codex CLI installed and logged in (`codex login`). Binary is discovered via `PATH`, `~/.local/node/bin/codex`, `~/.local/node-v*/bin/codex`, or overridden by `LLM_LIMITS_CODEX_BIN`.
 - No `quota`/`probe` fields are used — each type keeps its own fetch logic as-is.
-- When `providers` is absent, the built-in defaults are used — an old config keeps working unchanged.
+- When `providers` is absent, the built-in defaults (`kimi`, `openrouter`, `agy`) are used — an old config keeps working unchanged.
 
 ### Environment Variables
 
+- `LLM_LIMITS_CODEX_BIN`: Explicit path to `codex` binary (CLI).
 - `LLM_LIMITS_AGY_BIN`: Explicit path to `agy.exe`.
 - `LLM_LIMITS_QUOTA_CACHE_SECONDS`: Cache duration for Antigravity quota calls (default `300`).
 - `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: Output path for the cached quota JSON file.

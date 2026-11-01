@@ -59,6 +59,8 @@ func FetchAll(cfg *config.Config, opts Options) *model.Snapshot {
 			var block map[string]interface{}
 			if pc.Type == "openrouter" {
 				block = FetchOpenRouter(appDir, pc, ep)
+			} else if pc.Type == "codex" {
+				block = FetchCodex(appDir, pc)
 			} else {
 				block = FetchKimi(appDir, pc, ep)
 			}
@@ -189,6 +191,9 @@ func assemble(cfg *config.Config, appDir, nowIso string, agyRes *AgyResult, prov
 	if km, ok := providerBlocks["kimi"]; ok {
 		payload["kimi"] = km
 	}
+	if cx, ok := providerBlocks["codex"]; ok {
+		payload["codex"] = cx
+	}
 
 	WriteAtomicJson(filepath.Join(appDir, "limits.json"), payload)
 
@@ -210,6 +215,9 @@ func assemble(cfg *config.Config, appDir, nowIso string, agyRes *AgyResult, prov
 		if _, ok := block["limit_5h"]; ok {
 			st.Kind = "kimi"
 			st.Kimi = KimiToState(block)
+		} else if _, ok := block["plan_type"]; ok || getMap(block, "primary") != nil {
+			st.Kind = "codex"
+			st.Codex = CodexToState(block)
 		} else {
 			st.Kind = "openrouter"
 			st.OpenRouter = OpenRouterToState(block)
@@ -302,6 +310,9 @@ func LoadSnapshotFromDisk(cfg *config.Config, appDir string) *model.Snapshot {
 		if _, ok := block["limit_5h"]; ok {
 			st.Kind = "kimi"
 			st.Kimi = KimiToState(block)
+		} else if _, ok := block["plan_type"]; ok || getMap(block, "primary") != nil {
+			st.Kind = "codex"
+			st.Codex = CodexToState(block)
 		} else {
 			st.Kind = "openrouter"
 			st.OpenRouter = OpenRouterToState(block)
@@ -321,14 +332,32 @@ func LoadSnapshotFromDisk(cfg *config.Config, appDir string) *model.Snapshot {
 }
 
 func orderedIds(m map[string]map[string]interface{}) []string {
-	// стабильный порядок: kimi, openrouter, затем остальные по алфавиту
+	// стабильный порядок: kimi, openrouter, codex, затем остальные по алфавиту
+	orderWeight := func(id string) int {
+		switch id {
+		case "kimi":
+			return 1
+		case "openrouter":
+			return 2
+		case "codex":
+			return 3
+		default:
+			return 4
+		}
+	}
 	var pref, rest []string
 	for id := range m {
 		switch id {
-		case "kimi", "openrouter":
+		case "kimi", "openrouter", "codex":
 			pref = append(pref, id)
 		default:
 			rest = append(rest, id)
+		}
+	}
+	// сортировка pref по orderWeight
+	for i := 1; i < len(pref); i++ {
+		for j := i; j > 0 && orderWeight(pref[j]) < orderWeight(pref[j-1]); j-- {
+			pref[j], pref[j-1] = pref[j-1], pref[j]
 		}
 	}
 	// простая сортировка вставками для rest
@@ -336,9 +365,6 @@ func orderedIds(m map[string]map[string]interface{}) []string {
 		for j := i; j > 0 && rest[j] < rest[j-1]; j-- {
 			rest[j], rest[j-1] = rest[j-1], rest[j]
 		}
-	}
-	if len(pref) == 2 && pref[0] == "openrouter" {
-		pref[0], pref[1] = pref[1], pref[0]
 	}
 	return append(pref, rest...)
 }
@@ -427,6 +453,23 @@ func extractProviderBlock(id string, payload map[string]interface{}) map[string]
 			return v
 		}
 		if hasNonNull(payload, "limit") || hasNonNull(payload, "usage") {
+			return payload
+		}
+		return nil
+	}
+	if id == "codex" {
+		if d != nil {
+			if v := getMap(d, "codex"); v != nil {
+				return v
+			}
+			if getMap(d, "primary") != nil {
+				return d
+			}
+		}
+		if v := getMap(payload, "codex"); v != nil {
+			return v
+		}
+		if getMap(payload, "primary") != nil {
 			return payload
 		}
 		return nil

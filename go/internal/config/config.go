@@ -121,7 +121,7 @@ func parseProviders(list []interface{}) []Provider {
 			p.Type = "kimi"
 		}
 		switch p.Type {
-		case "kimi", "openrouter", "agy":
+		case "kimi", "openrouter", "agy", "codex":
 		default:
 			log.Printf("[config] providers: неизвестный type '%s' у записи '%s' — запись пропущена (новый провайдер = новый тип в коде)", p.Type, p.Id)
 			continue

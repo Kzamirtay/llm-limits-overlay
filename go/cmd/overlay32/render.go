@@ -338,6 +338,9 @@ func getRelativeTimeString(updatedIso, status string) (string, uint32) {
 	if status == "no_key" {
 		return "нет ключа", colorLabel
 	}
+	if status == "error" {
+		return "ошибка", colorMetaStale
+	}
 	isStale := (status == "stale")
 	if updatedIso == "" {
 		if isStale {
@@ -451,6 +454,17 @@ func CalculateWindowHeight(snap *model.Snapshot, cfg *config.Config) int32 {
 			}
 		} else if p.Type == "agy" {
 			h += 186
+		} else if p.Type == "codex" {
+			hasSec := false
+			st := findProviderState(snap, p.Id)
+			if st != nil && st.Codex != nil && st.Codex.Secondary != nil {
+				hasSec = true
+			}
+			if hasSec {
+				h += 94
+			} else {
+				h += 62
+			}
 		}
 	}
 
@@ -605,6 +619,84 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 				fPctColor, fPctFont := getPercentColorAndFont(freePct, freeFrac, r)
 				r.drawString(formatPercent(freePct), contentX+contentW-80, rFreeY, 80, 16, fPctFont, fPctColor, true)
 				r.drawProgressBar(contentX, curY+72, contentW, barHeight, freeFrac)
+			}
+
+			curY += cardH
+
+		case "codex":
+			st := findProviderState(snap, p.Id)
+			status := "online"
+			updated := ""
+			planType := ""
+			balance := ""
+			primPct, primFrac := 0.0, 0.0
+			primReset := "--"
+			hasSecondary := false
+			secPct, secFrac := 0.0, 0.0
+			secReset := "--"
+
+			if st != nil {
+				status = st.Status
+				updated = st.LastUpdated
+				if st.Codex != nil {
+					planType = st.Codex.PlanType
+					balance = st.Codex.Balance
+					primPct = st.Codex.Primary.UsedPercent
+					primFrac = st.Codex.Primary.UsedFraction
+					primReset = st.Codex.Primary.ResetIn
+
+					if st.Codex.Secondary != nil {
+						hasSecondary = true
+						secPct = st.Codex.Secondary.UsedPercent
+						secFrac = st.Codex.Secondary.UsedFraction
+						secReset = st.Codex.Secondary.ResetIn
+					}
+				}
+			}
+
+			cardH := float32(62)
+			if hasSecondary {
+				cardH = float32(94)
+			}
+			r.drawCardBackground(cardX, curY, cardW, cardH)
+
+			// Шапка: [Title] [planType • balance] ................... [Время/статус]
+			title := p.Title
+			if title == "" {
+				title = "CODEX"
+			}
+			r.drawString(title, contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
+			titleWidth := r.measureStringWidth(title, r.fontTitle)
+
+			metaParts := []string{}
+			if planType != "" {
+				metaParts = append(metaParts, planType)
+			}
+			if balance != "" && balance != "$0" && balance != "0" {
+				metaParts = append(metaParts, balance)
+			}
+			if len(metaParts) > 0 && status != "no_key" && status != "error" {
+				metaText := strings.Join(metaParts, " • ")
+				r.drawString(metaText, contentX+titleWidth+8, curY+9, 100, 16, r.fontMeta, colorLabel, false)
+			}
+
+			timeText, timeColor := getRelativeTimeString(updated, status)
+			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
+
+			// Строка 1: Primary
+			rPrimY := curY + 28
+			r.drawString(formatResetTimeLabel(primReset), contentX, rPrimY, 150, 16, r.fontRow, colorLabel, false)
+			pctColor, pctFont := getPercentColorAndFont(primPct, primFrac, r)
+			r.drawString(formatPercent(primPct), contentX+contentW-80, rPrimY, 80, 16, pctFont, pctColor, true)
+			r.drawProgressBar(contentX, curY+45, contentW, barHeight, primFrac)
+
+			// Строка 2: Secondary (если есть)
+			if hasSecondary {
+				rSecY := curY + 58
+				r.drawString(formatResetTimeLabel(secReset), contentX, rSecY, 150, 16, r.fontRow, colorLabel, false)
+				sPctColor, sPctFont := getPercentColorAndFont(secPct, secFrac, r)
+				r.drawString(formatPercent(secPct), contentX+contentW-80, rSecY, 80, 16, sPctFont, sPctColor, true)
+				r.drawProgressBar(contentX, curY+75, contentW, barHeight, secFrac)
 			}
 
 			curY += cardH
