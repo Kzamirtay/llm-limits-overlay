@@ -300,6 +300,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
+> - **v2.1.1**: Removed abandoned Wails PoC and dead code; added Linux fallback for standard `~/.config/llm-limits/.env`.
 > - **v2.1.0**: New Codex provider (ChatGPT Codex CLI via local JSON-RPC app-server without touching OAuth tokens), hidden child process console windows (`CREATE_NO_WINDOW`).
 > - **v2.0.1**: Positioning relative to Windows Work Area (`SystemParametersInfoW SPI_GETWORKAREA`) — floats cleanly above the taskbar with automatic margin and bounds clamping.
 > - **v2.0.0**: Complete migration to pure Go (Win32 Native HUD + CLI). Zero external runtime dependencies.
@@ -315,7 +316,7 @@ The following files must be located in the same directory as `llm-limits-overlay
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download the latest `LlmLimitsOverlay-v2.1.0-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download the latest `LlmLimitsOverlay-v2.1.1-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
 4. Ensure `agy.exe` is installed and you are signed in (`agy auth login`).
@@ -341,7 +342,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows Installer (v2.0.0+)
-A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.0.exe` (Inno Setup 6).
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.1.exe` (Inno Setup 6).
 
 **Features:**
 - Installs `llm-limits-overlay.exe` (GUI) and `llm-limits.exe` (CLI) to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
@@ -354,7 +355,7 @@ A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.0.exe` (I
 
 **Silent install (for automation):**
 ```cmd
-LlmLimitsOverlay-Setup-2.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.1.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.
@@ -368,7 +369,7 @@ LlmLimitsOverlay-Setup-2.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 A companion console utility ships next to the GUI (same Go fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
 
 ```cmd
-llm-limits --version         # prints "llm-limits 2.1.0"
+llm-limits --version         # prints "llm-limits 2.1.1"
 llm-limits --json            # works from any folder — installer adds it to your user PATH
 llm-limits --provider kimi
 llm-limits --watch 30        # refresh loop; Ctrl+C to exit
