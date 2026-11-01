@@ -1,7 +1,4 @@
 {
-    "backend":  "native",
-    "timeoutSeconds":  0,
-    "testHooks":  false,
-    "clickThroughHotkey":  "Ctrl+Alt+L",
-    "clickThrough":  true
+  "clickThrough": true,
+  "clickThroughHotkey": "Ctrl+Alt+L"
 }

@@ -165,7 +165,7 @@ type AgyBuckets struct {
 	ClaudeWeekly map[string]interface{}
 }
 
-// ParseAgyBuckets — groups[] -> бакеты (1:1 с C# ParseQuotaData).
+// ParseAgyBuckets — groups[] -> бакеты квот.
 func ParseAgyBuckets(resp map[string]interface{}) AgyBuckets {
 	out := AgyBuckets{
 		Gemini5h:     defaultAgyBucket("ok"),

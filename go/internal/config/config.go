@@ -53,7 +53,6 @@ type Provider struct {
 
 type Config struct {
 	Path               string
-	TimeoutSec         float64
 	ClickThrough       bool
 	ClickThroughHotkey string
 	Providers          []Provider // пусто = дефолты
@@ -106,9 +105,6 @@ func Load(path string) *Config {
 	if err := json.Unmarshal(raw, &root); err != nil {
 		Log(fmt.Sprintf("[config] parse error in %s: %v, using defaults", path, err))
 		return cfg
-	}
-	if v, ok := root["timeoutSeconds"].(float64); ok {
-		cfg.TimeoutSec = v
 	}
 	if v, ok := root["clickThrough"].(bool); ok {
 		cfg.ClickThrough = v

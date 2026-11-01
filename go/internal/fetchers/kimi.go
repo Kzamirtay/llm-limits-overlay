@@ -8,7 +8,7 @@ import (
 	"llmlimits/internal/model"
 )
 
-// FetchKimi — окна 5ч/7д из {baseUrl}/usages (1:1 с C# FetchWorkerKimi).
+// FetchKimi — окна 5ч/7д из {baseUrl}/usages.
 func FetchKimi(appDir string, p config.Provider, ep *env.Parser) map[string]interface{} {
 	id := p.Id
 	key := resolveKey(p, ep)

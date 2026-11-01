@@ -8,7 +8,7 @@ import (
 	"llmlimits/internal/model"
 )
 
-// FetchOpenRouter — кредиты + free-пул из {baseUrl}/key (1:1 с C# FetchWorkerOpenRouter).
+// FetchOpenRouter — кредиты + free-пул из {baseUrl}/key.
 func FetchOpenRouter(appDir string, p config.Provider, ep *env.Parser) map[string]interface{} {
 	id := p.Id
 	key := resolveKey(p, ep)

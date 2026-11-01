@@ -335,7 +335,7 @@ func formatResetTimeLabel(resetIn string) string {
 	return strings.TrimSpace(ru)
 }
 
-// getRelativeTimeString — 1:1 аналог GetRelativeTimeText и UpdateCardUpdatedLine из C#
+// getRelativeTimeString возвращает человекочитаемую строку времени обновления и цвет статуса
 func getRelativeTimeString(updatedIso, status string) (string, uint32) {
 	if status == "no_key" {
 		return "нет ключа", colorLabel

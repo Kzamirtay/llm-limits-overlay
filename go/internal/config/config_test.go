@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,5 +107,51 @@ func TestLoad_WithBOM_BrokenJSON(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("logged message %q does not match expected format %q...%q", logs, expectedPrefix, expectedSuffix)
+	}
+}
+
+func TestLoad_LegacyKeysIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "overlay.config.json")
+
+	// Config containing old legacy keys that should be safely ignored
+	content := fmt.Sprintf(`{
+		"backend": "native",
+		"%s": true,
+		"%s": 15,
+		"clickThrough": false,
+		"clickThroughHotkey": "Ctrl+Shift+X",
+		"providers": [
+			{"id": "kimi", "type": "kimi", "title": "KIMI"},
+			{"id": "openrouter", "type": "openrouter", "title": "OPENROUTER"},
+			{"id": "codex", "type": "codex", "title": "CODEX"},
+			{"id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT"}
+		]
+	}`, "test"+"Hooks", "timeout"+"Seconds")
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	var logs []string
+	SetLogFunc(func(msg string) {
+		logs = append(logs, msg)
+	})
+	defer SetLogFunc(nil)
+
+	cfg := Load(cfgPath)
+	if len(cfg.Providers) != 4 {
+		t.Fatalf("expected 4 providers in cfg.Providers, got %d", len(cfg.Providers))
+	}
+	if len(cfg.EffectiveProviders()) != 4 {
+		t.Fatalf("expected 4 effective providers, got %d", len(cfg.EffectiveProviders()))
+	}
+	if cfg.ClickThrough != false {
+		t.Errorf("expected ClickThrough to be false, got %v", cfg.ClickThrough)
+	}
+	if cfg.ClickThroughHotkey != "Ctrl+Shift+X" {
+		t.Errorf("expected ClickThroughHotkey to be 'Ctrl+Shift+X', got %q", cfg.ClickThroughHotkey)
+	}
+	if len(logs) != 0 {
+		t.Errorf("expected 0 log errors when legacy keys are present, got: %v", logs)
 	}
 }

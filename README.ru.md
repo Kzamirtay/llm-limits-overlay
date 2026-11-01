@@ -189,17 +189,11 @@
 
 ```json
 {
-  "backend": "native",
-  "timeoutSeconds": 0,
-  "testHooks": false,
   "clickThrough": true,
   "clickThroughHotkey": "Ctrl+Alt+L"
 }
 ```
 
-- `backend`: всегда `"native"` начиная с v1.2.0 (Python/WSL удалены). Устаревшие значения `auto`/`windows`/`wsl` молча нормализуются.
-- `timeoutSeconds`: общий бюджет фетча в секундах (0 = по умолчанию 10 с).
-- `testHooks`: включение тестовых хуков через управляющий файл `.tray-action` (по умолчанию `false`, выключено).
 - `clickThrough`: режим «клики насквозь» при запуске оверлея (по умолчанию `true`, включено). Задайте `false`, если требуется запуск в интерактивном режиме.
 - `clickThroughHotkey`: глобальная комбинация клавиш для быстрого переключения режима (по умолчанию `"Ctrl+Alt+L"`, поддерживает модификаторы Ctrl, Alt, Shift, Win и клавиши).
 
@@ -212,8 +206,6 @@
   "providers": [
     { "id": "kimi", "type": "kimi", "title": "KIMI", "apiKeyEnv": "KIMI_API_KEY" },
     { "id": "openrouter", "type": "openrouter", "title": "OPENROUTER", "apiKeyEnv": "OPENROUTER_API_KEY" },
-    { "id": "or2", "type": "openrouter", "title": "OPENROUTER 2", "apiKeyEnv": "OPENROUTER_API_KEY_2" },
-    { "id": "kimi2", "type": "kimi", "title": "KIMI 2", "apiKeyEnv": "KIMI_API_KEY_2" },
     { "id": "codex", "type": "codex", "title": "CODEX" },
     { "id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT" }
   ]
@@ -398,7 +390,7 @@ llm-limits --json
 llm-limits --watch 30
 ```
 
-- Ключи читаются из `.env` **рядом с бинарником** (либо `--env <путь>`).
+- Ключи читаются из `~/.config/llm-limits/.env` (либо `--env <путь>`).
 - Карточка Gemini/Claude требует нативный Linux-бинарник `agy`: ищется в `LLM_LIMITS_AGY_BIN`, затем `PATH`, затем `~/.local/bin/agy`, `/usr/local/bin/agy`. OAuth-токен читается из `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Остальное (Kimi, OpenRouter) работает без `agy`.
 - **Примечание о GUI под Linux**: Нативный HUD-оверлей использует подсистему Win32 Layered Windows и GDI+ (`user32.dll`, `gdiplus.dll`) и работает только в Windows. Поэтому поддержка Linux официально осуществляется через автономный статический CLI `llm-limits-linux-x64`.
@@ -416,7 +408,12 @@ GUI версии 2.0.0 (`llm-limits-overlay.exe`) реализован на чи
   - Дочерние процессы: **0** (нет процессов WebView2 / Chromium).
   - CPU за 60с: **~0.06с**.
   - Размер exe: **7.4 МБ** (чистый Go без cgo).
-- **Проверка на Windows**: Автоматизированный скрипт `go/verify-stage5.ps1` проводит сквозную приёмку: проверка различия MD5 на белой и тёмной подложке, 60-секундный бенчмарк памяти, проверка состояний `no_key`, `stale` и динамической высоты.
+- **Скрипты верификации**:
+  - `go/smoke-test.ps1`: сквозное смоук-тестирование (тихая установка Inno Setup, запуск оверлея, вызовы CLI, удаление).
+  - `go/verify-codex.ps1`: проверка чтения квот Codex CLI через локальный `codex app-server` (JSON-RPC).
+  - `go/verify-hideconsole.ps1`: проверка запуска фоновых процессов (`agy`, `codex`) без мелькания консольных окон.
+  - `go/verify-workarea.ps1`: проверка позиционирования окна над рабочей областью панели задач (`SPI_GETWORKAREA`).
+  - `go/capture-screenshots.ps1`: автоматическое снятие эталонных скриншотов оверлея на светлом и тёмном фоне.
 
 ---
 

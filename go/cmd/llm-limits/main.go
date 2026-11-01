@@ -207,16 +207,10 @@ func effectiveAgyTimeout(opt *options) int {
 
 func fetchOnce(opt *options, cfg *config.Config, appDir string) *model.Snapshot {
 	timeout := effectiveAgyTimeout(opt)
-	budgetSec := cfg.TimeoutSec
-	budgetMs := 0
-	if budgetSec > 0 && int(budgetSec*1000) < (timeout+5)*1000 {
-		budgetMs = int(budgetSec * 1000)
-	}
 	effectiveCfg := cfg
 	if opt.provider != "" {
 		effectiveCfg = &config.Config{
 			Path:               cfg.Path,
-			TimeoutSec:         cfg.TimeoutSec,
 			ClickThrough:       cfg.ClickThrough,
 			ClickThroughHotkey: cfg.ClickThroughHotkey,
 		}
@@ -230,7 +224,6 @@ func fetchOnce(opt *options, cfg *config.Config, appDir string) *model.Snapshot 
 		AppDir:        appDir,
 		EnvPath:       opt.envPath,
 		AgyTimeoutSec: timeout,
-		BudgetMs:      budgetMs,
 	})
 }
 

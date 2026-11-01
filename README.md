@@ -191,17 +191,11 @@ The configuration file is automatically created next to the executable if not pr
 
 ```json
 {
-  "backend": "native",
-  "timeoutSeconds": 0,
-  "testHooks": false,
   "clickThrough": true,
   "clickThroughHotkey": "Ctrl+Alt+L"
 }
 ```
 
-- `backend`: Always `"native"` since v1.2.0 (Python/WSL removed). Legacy values `auto`/`windows`/`wsl` are silently normalized.
-- `timeoutSeconds`: Overall fetch budget in seconds (0 = default 10 s).
-- `testHooks`: Enables programmatic control via `.tray-action` file (default `false`).
 - `clickThrough`: Startup click-through state (default `true`). Set to `false` for standard interactive mode.
 - `clickThroughHotkey`: Global shortcut for toggling click-through (default `"Ctrl+Alt+L"`).
 
@@ -214,8 +208,6 @@ By default the overlay shows the built-in three: **KIMI**, **OPENROUTER**, **GEM
   "providers": [
     { "id": "kimi", "type": "kimi", "title": "KIMI", "apiKeyEnv": "KIMI_API_KEY" },
     { "id": "openrouter", "type": "openrouter", "title": "OPENROUTER", "apiKeyEnv": "OPENROUTER_API_KEY" },
-    { "id": "or2", "type": "openrouter", "title": "OPENROUTER 2", "apiKeyEnv": "OPENROUTER_API_KEY_2" },
-    { "id": "kimi2", "type": "kimi", "title": "KIMI 2", "apiKeyEnv": "KIMI_API_KEY_2" },
     { "id": "codex", "type": "codex", "title": "CODEX" },
     { "id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT" }
   ]
@@ -401,7 +393,7 @@ llm-limits --json
 llm-limits --watch 30
 ```
 
-- Keys are read from `.env` **next to the binary** (or `--env <path>`).
+- Keys are read from `~/.config/llm-limits/.env` (or `--env <path>`).
 - The Gemini/Claude card requires the native Linux `agy` binary: resolved from `LLM_LIMITS_AGY_BIN`, `PATH`, `~/.local/bin/agy`, `/usr/local/bin/agy`. The OAuth token is read from `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 - Everything else (Kimi, OpenRouter) works without `agy`.
 - **Linux GUI Support Note**: The native HUD overlay uses Win32 Layered Windows and GDI+ APIs (`user32.dll`, `gdiplus.dll`) and is Windows-specific. Therefore, Linux is officially supported via the standalone static CLI (`llm-limits-linux-x64`).
@@ -419,7 +411,12 @@ The v2.0.0 GUI (`llm-limits-overlay.exe`) is implemented in pure Go (`go/cmd/ove
   - Child Processes: **0** (no WebView2 / Chromium processes).
   - CPU (60s total): **~0.06s**.
   - Binary Size: **7.4 MB** (pure Go static executable, no CGO or MinGW required).
-- **Verification on Windows**: Automated test via `go/verify-stage5.ps1` checks white/dark backdrop MD5 divergence, performs a 60-second memory benchmark, and verifies `no_key`, `stale`, and dynamic height scaling.
+- **Verification Scripts**:
+  - `go/smoke-test.ps1`: End-to-end smoke test for silent installation, overlay runtime, CLI calls, and clean uninstallation.
+  - `go/verify-codex.ps1`: Verifies Codex CLI quota retrieval via local `codex app-server` JSON-RPC.
+  - `go/verify-hideconsole.ps1`: Verifies background child processes (`agy`, `codex`) execute silently without flashing console windows.
+  - `go/verify-workarea.ps1`: Verifies window positioning and docking above the Windows taskbar work area (`SPI_GETWORKAREA`).
+  - `go/capture-screenshots.ps1`: Automated screenshot capture of the overlay against light and dark backdrops.
 
 ---
 

@@ -74,7 +74,7 @@ func SetLogFileName(name string) {
 	}
 }
 
-// LogLine — одна строка в overlay.log (appDir), формат как в C#-версии.
+// LogLine — одна строка в overlay.log (appDir).
 func LogLine(appDir, msg string) {
 	if appDir == "" {
 		return
