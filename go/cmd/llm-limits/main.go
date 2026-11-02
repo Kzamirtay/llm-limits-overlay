@@ -47,7 +47,7 @@ func run(args []string) int {
 		return 0
 	}
 	if opt.version {
-		fmt.Println("llm-limits 2.1.4")
+		fmt.Println("llm-limits 2.1.5")
 		return 0
 	}
 
@@ -578,7 +578,7 @@ func isTTY() bool {
 }
 
 func printHelp() {
-	fmt.Println("llm-limits 2.1.4 - LLM quota status in the terminal (Kimi / OpenRouter / Gemini+Claude-GPT / Codex)")
+	fmt.Println("llm-limits 2.1.5 - LLM quota status in the terminal (Kimi / OpenRouter / Gemini+Claude-GPT / Codex)")
 	fmt.Println()
 	fmt.Println("Usage: llm-limits [options]")
 	fmt.Println()
@@ -593,7 +593,7 @@ func printHelp() {
 	fmt.Println("  --agy-bin <path>        Explicit path to agy binary")
 	fmt.Println("  --agy-timeout <sec>     agy spawn timeout, 1..120 (default: Windows 8s, Linux/macOS 20s; env LLM_LIMITS_AGY_TIMEOUT)")
 	fmt.Println("  --no-color              Disable ANSI colors (also honors NO_COLOR)")
-	fmt.Println("  --version, -v           Show version (2.1.4)")
+	fmt.Println("  --version, -v           Show version (2.1.5)")
 	fmt.Println("  --help                  Show this help")
 	fmt.Println()
 	fmt.Println("Exit codes: 0 = all providers online, 2 = some stale, 1 = all failed / config error")

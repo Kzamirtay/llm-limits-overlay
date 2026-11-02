@@ -290,6 +290,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 > [!NOTE]
 > **История версий**:
+> - **v2.1.5**: Расчёт расхода OpenRouter по активному `effective_budget` вместо lifetime usage; корректная обработка legacy `include_byok_in_limit`, лимитов без сброса (`limit_reset: null`), неполного бюджета и изоляции дат сброса.
 > - **v2.1.4**: Граyscale антиалиасинг текста (`TextRenderingHintAntiAliasGridFit`) вместо ClearType, устранение цветных ореолов и грязных пикселей на светлом фоне.
 > - **v2.1.3**: Удалены устаревшие ключи конфига (`backend`, `testHooks`, `timeoutSeconds`) и неактуальные скрипты паритета с C#.
 > - **v2.1.2**: Поддержка UTF-8 BOM для конфига и `.env` (защита от тихого сброса на дефолты), явное логирование ошибок разбора конфига.
@@ -309,7 +310,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### Способы запуска
 
 #### 1. Запуск готового бинарника из Releases
-1. Скачайте архив `LlmLimitsOverlay-v2.1.4-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Скачайте архив `LlmLimitsOverlay-v2.1.5-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Распакуйте в любую удобную папку.
 3. Создайте `.env` с API-ключами (скопируйте из `.env.example`).
 4. Убедитесь, что `agy.exe` установлен и вы авторизованы (`agy auth login`).
@@ -335,7 +336,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows-установщик (v2.0.0+)
-Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.1.4.exe` (Inno Setup 6).
+Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.1.5.exe` (Inno Setup 6).
 
 **Возможности:**
 - Устанавливает `llm-limits-overlay.exe` (GUI) и `llm-limits.exe` (CLI) в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
@@ -348,7 +349,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 
 **Тихая установка (для автоматизации):**
 ```cmd
-LlmLimitsOverlay-Setup-2.1.4.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.1.5.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **Предупреждение SmartScreen**: установщик не подписан цифровой подписью (нет EV-сертификата). Windows SmartScreen покажет «Защита Windows» — нажмите «Подробнее» → «Всё равно запустить». Это нормально для open-source проектов без платного сертификата.
