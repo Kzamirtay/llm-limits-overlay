@@ -54,7 +54,7 @@ func parseOpenRouterData(data map[string]interface{}, nowIso string) map[string]
 	var resetsAt string
 
 	eb := getMap(data, "effective_budget")
-	if eb != nil && len(eb) > 0 {
+	if isValidEffectiveBudget(eb) {
 		hasLimit = hasNonNull(eb, "limit_usd")
 		if hasLimit {
 			limitNum = getFloat(eb, "limit_usd", 0)
@@ -82,38 +82,17 @@ func parseOpenRouterData(data map[string]interface{}, nowIso string) map[string]
 			}
 		}
 
-		limitReset = getStr(eb, "reset_interval")
-		if limitReset == "" {
-			limitReset = getStr(data, "limit_reset")
-		}
-		if limitReset == "" {
-			limitReset = "monthly"
+		// null / missing reset_interval in effective_budget means no periodic reset
+		if hasNonNull(eb, "reset_interval") {
+			limitReset = getStr(eb, "reset_interval")
+		} else {
+			limitReset = ""
 		}
 
 		resetsAt = getStr(eb, "resets_at")
-		if resetsAt == "" && limitReset != "none" {
-			ebScope := getStr(eb, "scope")
+		if resetsAt == "" && limitReset != "" && limitReset != "none" {
 			budgets := getList(data, "budgets")
-			if ebScope != "" {
-				for _, b := range budgets {
-					if bm, ok := b.(map[string]interface{}); ok {
-						if getStr(bm, "scope") == ebScope {
-							resetsAt = getStr(bm, "resets_at")
-							break
-						}
-					}
-				}
-			}
-			if resetsAt == "" {
-				for _, b := range budgets {
-					if bm, ok := b.(map[string]interface{}); ok {
-						if getStr(bm, "reset_interval") == limitReset {
-							resetsAt = getStr(bm, "resets_at")
-							break
-						}
-					}
-				}
-			}
+			resetsAt = findEffectiveBudgetReset(eb, budgets)
 		}
 	} else {
 		hasLimit = hasNonNull(data, "limit")
@@ -121,12 +100,14 @@ func parseOpenRouterData(data map[string]interface{}, nowIso string) map[string]
 			limitNum = getFloat(data, "limit", 0)
 		}
 
-		limitReset = getStr(data, "limit_reset")
-		if limitReset == "" {
-			limitReset = "monthly"
+		// null / missing limit_reset in data means no periodic reset (lifetime)
+		if hasNonNull(data, "limit_reset") {
+			limitReset = getStr(data, "limit_reset")
+		} else {
+			limitReset = ""
 		}
 
-		includeByok := getBool(data, "include_byok")
+		includeByok := getBool(data, "include_byok_in_limit") || getBool(data, "include_byok")
 		switch limitReset {
 		case "daily":
 			if hasNonNull(data, "usage_daily") {
@@ -161,16 +142,10 @@ func parseOpenRouterData(data map[string]interface{}, nowIso string) map[string]
 			} else {
 				spendVal = getFloat(data, "usage_monthly", 0)
 			}
-		case "none":
+		default:
 			spendVal = usageAllTime
 			if includeByok {
 				spendVal += getFloat(data, "byok_usage", 0)
-			}
-		default:
-			if hasLimit && hasNonNull(data, "limit_remaining") {
-				spendVal = limitNum - getFloat(data, "limit_remaining", 0)
-			} else {
-				spendVal = usageAllTime
 			}
 		}
 		if spendVal < 0 {
@@ -186,25 +161,13 @@ func parseOpenRouterData(data map[string]interface{}, nowIso string) map[string]
 			}
 		}
 
-		if limitReset != "none" {
+		if limitReset != "" && limitReset != "none" {
 			budgets := getList(data, "budgets")
-			for _, b := range budgets {
-				if bm, ok := b.(map[string]interface{}); ok {
-					if getStr(bm, "reset_interval") == limitReset {
-						resetsAt = getStr(bm, "resets_at")
-						break
-					}
-				}
-			}
-			if resetsAt == "" && len(budgets) == 1 {
-				if bm, ok := budgets[0].(map[string]interface{}); ok {
-					resetsAt = getStr(bm, "resets_at")
-				}
-			}
+			resetsAt = findLegacyKeyBudgetReset(budgets, limitReset)
 		}
 	}
 
-	if limitReset == "none" {
+	if limitReset == "" || limitReset == "none" {
 		resetsAt = ""
 	}
 
@@ -254,6 +217,128 @@ func parseOpenRouterData(data map[string]interface{}, nowIso string) map[string]
 	return res
 }
 
+func isValidEffectiveBudget(eb map[string]interface{}) bool {
+	if eb == nil {
+		return false
+	}
+	hasLimit := hasNonNull(eb, "limit_usd")
+	hasSpend := hasNonNull(eb, "spend_usd")
+	hasRemaining := hasNonNull(eb, "remaining_usd")
+
+	if hasLimit && (hasSpend || hasRemaining) {
+		return true
+	}
+	if hasSpend && hasRemaining {
+		return true
+	}
+	if val, exists := eb["limit_usd"]; exists && val == nil && hasSpend {
+		return true
+	}
+	return false
+}
+
+func budgetMatches(eb, b map[string]interface{}) bool {
+	if eb == nil || b == nil {
+		return false
+	}
+	ebScope := getStr(eb, "scope")
+	bScope := getStr(b, "scope")
+	if ebScope != bScope {
+		return false
+	}
+
+	ebID := getStr(eb, "budget_id")
+	if ebID == "" {
+		ebID = getStr(eb, "guardrail_id")
+	}
+	if ebID == "" {
+		ebID = getStr(eb, "id")
+	}
+
+	bID := getStr(b, "budget_id")
+	if bID == "" {
+		bID = getStr(b, "guardrail_id")
+	}
+	if bID == "" {
+		bID = getStr(b, "id")
+	}
+
+	if ebID != "" || bID != "" {
+		if ebID != bID {
+			return false
+		}
+	}
+
+	ebInterval := getStr(eb, "reset_interval")
+	bInterval := getStr(b, "reset_interval")
+	if ebInterval != "" && bInterval != "" && ebInterval != bInterval {
+		return false
+	}
+
+	if hasNonNull(eb, "limit_usd") && hasNonNull(b, "limit_usd") {
+		if getFloat(eb, "limit_usd", 0) != getFloat(b, "limit_usd", 0) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func findEffectiveBudgetReset(eb map[string]interface{}, budgets []interface{}) string {
+	if eb == nil {
+		return ""
+	}
+	ebInterval := getStr(eb, "reset_interval")
+	if ebInterval == "" || ebInterval == "none" {
+		return ""
+	}
+
+	var match string
+	matchCount := 0
+	for _, item := range budgets {
+		bm, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if budgetMatches(eb, bm) {
+			match = getStr(bm, "resets_at")
+			matchCount++
+		}
+	}
+	if matchCount == 1 {
+		return match
+	}
+	return ""
+}
+
+func findLegacyKeyBudgetReset(budgets []interface{}, limitReset string) string {
+	if limitReset == "" || limitReset == "none" {
+		return ""
+	}
+	var match string
+	matchCount := 0
+	for _, item := range budgets {
+		bm, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		scope := getStr(bm, "scope")
+		if scope != "key_limit" {
+			continue
+		}
+		interval := getStr(bm, "reset_interval")
+		if interval != limitReset {
+			continue
+		}
+		match = getStr(bm, "resets_at")
+		matchCount++
+	}
+	if matchCount == 1 {
+		return match
+	}
+	return ""
+}
+
 func round2(f float64) float64 {
 	return math.Round(f*100) / 100
 }
@@ -270,7 +355,7 @@ func defaultOpenRouter(status string) map[string]interface{} {
 		"used_percent":     0.0,
 		"used_fraction":    0.0,
 		"reset_in":         "--",
-		"limit_reset":      "monthly",
+		"limit_reset":      "",
 		"resets_at":        "",
 		"level":            "unknown",
 		"free_daily_used":  0,
