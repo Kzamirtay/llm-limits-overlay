@@ -19,6 +19,8 @@ type OpenRouterInfo struct {
 	LastUpdated    string
 	Limit          float64
 	Usage          float64
+	UsagePeriod    float64
+	UsageTotal     float64
 	LimitRemaining float64
 	UsedPercent    float64
 	UsedFraction   float64

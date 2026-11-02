@@ -60,6 +60,16 @@ func getList(d map[string]interface{}, key string) []interface{} {
 	return nil
 }
 
+func getBool(d map[string]interface{}, key string) bool {
+	if d == nil {
+		return false
+	}
+	if v, ok := d[key].(bool); ok {
+		return v
+	}
+	return false
+}
+
 // hasNonNull — ключ есть и не null.
 func hasNonNull(d map[string]interface{}, key string) bool {
 	v, ok := d[key]

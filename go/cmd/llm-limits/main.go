@@ -458,10 +458,13 @@ func buildPayload(opt *options, snap *model.Snapshot) map[string]interface{} {
 				"last_updated":     st.LastUpdated,
 				"limit":            or.Limit,
 				"usage":            or.Usage,
+				"usage_total":      or.UsageTotal,
+				"usage_period":     or.UsagePeriod,
 				"limit_remaining":  or.LimitRemaining,
 				"used_percent":     or.UsedPercent,
 				"used_fraction":    or.UsedFraction,
 				"reset_in":         or.ResetIn,
+				"limit_reset":      or.LimitReset,
 				"free_daily_used":  or.FreeDailyUsed,
 				"free_daily_limit": or.FreeDailyLimit,
 			}
