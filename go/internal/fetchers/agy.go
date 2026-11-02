@@ -131,14 +131,26 @@ func userHome() string {
 }
 
 // CheckAgyAuth — токен-файл существует и не пуст (блок OAuth-попапа).
+// Принимает любой из известных файлов с кредами agy:
+//   - ~/.gemini/antigravity-cli/antigravity-oauth-token (исторический)
+//   - ~/.gemini/oauth_creds.json (реальный путь agy CLI)
+//   - %LOCALAPPDATA%\.gemini\oauth_creds.json (альтернативный Windows-путь)
 func CheckAgyAuth() bool {
 	home := userHome()
-	if runtime.GOOS == "windows" && home != "" {
-		if fileNonEmpty(filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")) {
-			return true
+	if runtime.GOOS == "windows" {
+		if home != "" {
+			if fileNonEmpty(filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")) {
+				return true
+			}
+			if fileNonEmpty(filepath.Join(home, ".gemini", "oauth_creds.json")) {
+				return true
+			}
 		}
 		if la := os.Getenv("LOCALAPPDATA"); la != "" {
 			if fileNonEmpty(filepath.Join(la, ".gemini", "antigravity-cli", "antigravity-oauth-token")) {
+				return true
+			}
+			if fileNonEmpty(filepath.Join(la, ".gemini", "oauth_creds.json")) {
 				return true
 			}
 		}
@@ -218,15 +230,15 @@ func ParseAgyBuckets(resp map[string]interface{}) AgyBuckets {
 				display = bid
 			}
 			info := map[string]interface{}{
-				"percent":     pct,
-				"fraction":    frac,
+				"percent":       pct,
+				"fraction":      frac,
 				"used_percent":  usedPct,
 				"used_fraction": usedFrac,
-				"reset_in":    FormatTimeDiff(resetTime, "N/A"),
-				"reset_time":  resetTime,
-				"level":       GetUsedStatusLevel(usedFrac),
-				"displayName": display,
-				"description": getStr(b, "description"),
+				"reset_in":      FormatTimeDiff(resetTime, "N/A"),
+				"reset_time":    resetTime,
+				"level":         GetUsedStatusLevel(usedFrac),
+				"displayName":   display,
+				"description":   getStr(b, "description"),
 			}
 
 			isGemini := strings.Contains(gname, "gemini")
