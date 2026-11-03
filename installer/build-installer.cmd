@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 rem Build LlmLimitsOverlay installer via Go and Inno Setup (ISCC.exe)
-rem Output: dist/LlmLimitsOverlay-Setup-2.1.5.exe
+rem Output: dist/LlmLimitsOverlay-Setup-2.1.6.exe
 
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%\.."
@@ -57,8 +57,8 @@ set "ISS_FILE=%SCRIPT_DIR%\LlmLimitsOverlay.iss"
 
 echo =======================================================
 echo Building LlmLimitsOverlay Installer via Inno Setup...
-echo Version: 2.1.5
-echo Output: %DIST_DIR%\LlmLimitsOverlay-Setup-2.1.5.exe
+echo Version: 2.1.6
+echo Output: %DIST_DIR%\LlmLimitsOverlay-Setup-2.1.6.exe
 echo =======================================================
 
 "%ISCC%" "%ISS_FILE%"
@@ -68,7 +68,7 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b %ERRORLEVEL%
 )
 
-for %%F in ("%DIST_DIR%\LlmLimitsOverlay-Setup-2.1.5.exe") do (
+for %%F in ("%DIST_DIR%\LlmLimitsOverlay-Setup-2.1.6.exe") do (
     echo [SUCCESS] Installer built!
     echo Executable: %%~fF
     echo File size:  %%~zF bytes
