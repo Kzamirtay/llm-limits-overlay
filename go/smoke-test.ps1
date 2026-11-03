@@ -14,6 +14,23 @@ $prodExe = Join-Path $env:LOCALAPPDATA "LlmLimitsOverlay\llm-limits-overlay.exe"
 $prodWasRunning = $null -ne (Get-Process -Name 'llm-limits-overlay' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $prodExe })
 Write-Host "-> production overlay running before test: $prodWasRunning"
 
+if ($prodWasRunning) {
+    Get-Process -Name 'llm-limits-overlay' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $prodExe } | Stop-Process -Force
+    $stopped = $false
+    for ($i = 0; $i -lt 10; $i++) {
+        Start-Sleep -Seconds 1
+        $stillRunning = Get-Process -Name 'llm-limits-overlay' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $prodExe }
+        if (-not $stillRunning) {
+            $stopped = $true
+            break
+        }
+    }
+    if (-not $stopped) {
+        throw "production overlay did not stop within 10 seconds"
+    }
+    Write-Host "-> production overlay stopped for test"
+}
+
 # 0. Check setup exe exists and copy locally to avoid UNC security prompts
 if (-not (Test-Path $setupExe)) {
     throw "Setup executable not found at $setupExe"
