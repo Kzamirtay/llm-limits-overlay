@@ -58,8 +58,8 @@ if (Test-Path $envSource) {
 # Configure 4 providers (kimi, openrouter, codex, agy)
 $fourCfg = @{
     providers = @(
-        @{ id = "kimi"; type = "kimi"; title = "KIMI"; enabled = $true },
-        @{ id = "openrouter"; type = "openrouter"; title = "OPENROUTER"; enabled = $true },
+        @{ id = "kimi"; type = "kimi"; title = "KIMI"; enabled = $true; apiKeyEnv = "KIMI_API_KEY" },
+        @{ id = "openrouter"; type = "openrouter"; title = "OPENROUTER"; enabled = $true; apiKeyEnv = "OPENROUTER_API_KEY" },
         @{ id = "codex"; type = "codex"; title = "CODEX"; enabled = $true },
         @{ id = "agy"; type = "agy"; title = "GEMINI + CLAUDE/GPT"; enabled = $true }
     )
@@ -71,6 +71,9 @@ if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) {
     throw "CLI --json returned failure code $LASTEXITCODE"
 }
 Write-Host "  -> CLI returned exit code $LASTEXITCODE"
+if ($jsonOut -match "no_key") {
+    throw "CLI --json contains no_key: .env did not load properly"
+}
 
 # 4. Launch GUI overlay and observe 2 fetch cycles
 Write-Host "[3/6] Launching GUI overlay for 2 fetch cycles..."
