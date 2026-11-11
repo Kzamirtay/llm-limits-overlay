@@ -130,34 +130,52 @@ func userHome() string {
 	return ""
 }
 
+// agyAuthPaths returns the list of credential file paths to check for a given
+// home dir and optional localAppData dir (Windows %LOCALAPPDATA%). Testable
+// without touching the real filesystem.
+//
+// Credential files accepted (any one present and non-empty → auth OK):
+//   - ~/.gemini/antigravity-acp/acp_token.json  (AGY 1.5.4 — primary)
+//   - ~/.gemini/oauth_creds.json                (AGY CLI OAuth credential)
+//   - ~/.gemini/antigravity-cli/antigravity-oauth-token  (legacy / pre-1.5)
+//   - %LOCALAPPDATA%/.gemini/antigravity-acp/acp_token.json (Windows alt)
+//   - %LOCALAPPDATA%/.gemini/oauth_creds.json              (Windows alt)
+//   - %LOCALAPPDATA%/.gemini/antigravity-cli/antigravity-oauth-token (Windows alt)
+func agyAuthPaths(home, localAppData string) []string {
+	var paths []string
+	if home != "" {
+		paths = append(paths,
+			filepath.Join(home, ".gemini", "antigravity-acp", "acp_token.json"),
+			filepath.Join(home, ".gemini", "oauth_creds.json"),
+			filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+		)
+	}
+	if localAppData != "" {
+		paths = append(paths,
+			filepath.Join(localAppData, ".gemini", "antigravity-acp", "acp_token.json"),
+			filepath.Join(localAppData, ".gemini", "oauth_creds.json"),
+			filepath.Join(localAppData, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+		)
+	}
+	return paths
+}
+
 // CheckAgyAuth — токен-файл существует и не пуст (блок OAuth-попапа).
 // Принимает любой из известных файлов с кредами agy:
-//   - ~/.gemini/antigravity-cli/antigravity-oauth-token (исторический)
+//   - ~/.gemini/antigravity-acp/acp_token.json (AGY 1.5.4 — основной)
 //   - ~/.gemini/oauth_creds.json (реальный путь agy CLI)
-//   - %LOCALAPPDATA%\.gemini\oauth_creds.json (альтернативный Windows-путь)
+//   - ~/.gemini/antigravity-cli/antigravity-oauth-token (исторический)
+//   - %LOCALAPPDATA%\.gemini\... — альтернативный Windows-путь
 func CheckAgyAuth() bool {
 	home := userHome()
+	la := ""
 	if runtime.GOOS == "windows" {
-		if home != "" {
-			if fileNonEmpty(filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")) {
-				return true
-			}
-			if fileNonEmpty(filepath.Join(home, ".gemini", "oauth_creds.json")) {
-				return true
-			}
-		}
-		if la := os.Getenv("LOCALAPPDATA"); la != "" {
-			if fileNonEmpty(filepath.Join(la, ".gemini", "antigravity-cli", "antigravity-oauth-token")) {
-				return true
-			}
-			if fileNonEmpty(filepath.Join(la, ".gemini", "oauth_creds.json")) {
-				return true
-			}
-		}
-		return false
+		la = os.Getenv("LOCALAPPDATA")
 	}
-	if home != "" {
-		return fileNonEmpty(filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
+	for _, p := range agyAuthPaths(home, la) {
+		if fileNonEmpty(p) {
+			return true
+		}
 	}
 	return false
 }
