@@ -292,6 +292,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
+> - **v2.1.7**: AGY (Antigravity CLI) Windows 1.5.4 support — structural validation of the new credential file (`acp_token.json`) alongside legacy paths (read-only; malformed/irrelevant files never launch the CLI, so no OAuth popup risk from a broken file). After an auth failure — including a silent timeout while the CLI waits for browser sign-in — the launcher latches on the credential fingerprint and does not relaunch AGY until the credentials actually change or the user explicitly retries (force refresh / `--no-cache`); no repeated browser windows every minute. A revoked session may still open one browser window on the first launch; the latch suppresses only repeats. Placeholder buckets are now shown honestly (`--` / `нет данных`) instead of a fabricated `0%`; a real `0%` stays `0%`; cached valid values survive failures as `stale` instead of being erased.
 > - **v2.1.5**: OpenRouter quota calculation now uses the active `effective_budget` (instead of mixing all-time usage with periodic limits); fixed legacy `include_byok_in_limit`, non-periodic limit handling (`limit_reset: null`), incomplete budget fallback, and budget reset isolation.
 > - **v2.1.4**: Grayscale anti-aliased text rendering (`TextRenderingHintAntiAliasGridFit`) replacing ClearType to prevent colored halos and dirty pixel artifacts on translucent and light backgrounds.
 > - **v2.1.3**: Removed legacy config keys (`backend`, `testHooks`, `timeoutSeconds`) and obsolete C# parity scripts.
@@ -312,7 +313,7 @@ The following files must be located in the same directory as `llm-limits-overlay
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download the latest `LlmLimitsOverlay-v2.1.6-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download the latest `LlmLimitsOverlay-v2.1.7-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
 4. Ensure `agy.exe` is installed and you are signed in (`agy auth login`).
@@ -338,7 +339,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows Installer (v2.0.0+)
-A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.6.exe` (Inno Setup 6).
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.7.exe` (Inno Setup 6).
 
 **Features:**
 - Installs `llm-limits-overlay.exe` (GUI) and `llm-limits.exe` (CLI) to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
@@ -351,7 +352,7 @@ A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.6.exe` (I
 
 **Silent install (for automation):**
 ```cmd
-LlmLimitsOverlay-Setup-2.1.6.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.1.7.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.
@@ -365,7 +366,7 @@ LlmLimitsOverlay-Setup-2.1.6.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 A companion console utility ships next to the GUI (same Go fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
 
 ```cmd
-llm-limits --version         # prints "llm-limits 2.1.6"
+llm-limits --version         # prints "llm-limits 2.1.7"
 llm-limits --json            # works from any folder — installer adds it to your user PATH
 llm-limits --provider kimi
 llm-limits --watch 30        # refresh loop; Ctrl+C to exit

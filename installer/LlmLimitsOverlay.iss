@@ -1,9 +1,9 @@
 ; LlmLimitsOverlay Inno Setup Script
 ; Build: ISCC.exe LlmLimitsOverlay.iss
-; Output: dist/LlmLimitsOverlay-Setup-2.1.6.exe
+; Output: dist/LlmLimitsOverlay-Setup-2.1.7.exe
 
 #define MyAppName "LLM Limits Overlay"
-#define MyAppVersion "2.1.6"
+#define MyAppVersion "2.1.7"
 #define MyAppPublisher "Kzamirtay"
 #define MyAppURL "https://github.com/Kzamirtay/llm-limits-overlay"
 #define MyAppExeName "llm-limits-overlay.exe"
