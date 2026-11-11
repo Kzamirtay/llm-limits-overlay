@@ -344,6 +344,117 @@ func TestAgyFetch_AuthFailure_ExplicitRetryClearsLatch(t *testing.T) {
 	}
 }
 
+// useFakeAgyBinShell устанавливает LLM_LIMITS_AGY_BIN на скрипт с заданным телом.
+// Для тестов таймаута (sleep-чилд) — Windows .bat не считает старты, поэтому
+// счётчик проверяется только на не-Windows; логика latch проверяется по статусу.
+func useFakeAgyBinShell(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	var scriptPath string
+	if runtime.GOOS == "windows" {
+		scriptPath = filepath.Join(dir, "fake-agy.bat")
+	} else {
+		scriptPath = filepath.Join(dir, "fake-agy.sh")
+	}
+	writeFile(t, scriptPath, body)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(scriptPath, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+	}
+	t.Setenv("LLM_LIMITS_AGY_BIN", scriptPath)
+	return scriptPath
+}
+
+// TestAgyFetch_TimeoutAuthEvidence_LatchesRepeatPolls: реальный сценарий OAuth —
+// CLI ждёт browser sign-in и висит до таймаута. Без latch окно открывалось бы
+// каждую минуту. Auth-evidence в stderr на таймауте обязан latch'ить.
+func TestAgyFetch_TimeoutAuthEvidence_LatchesRepeatPolls(t *testing.T) {
+	home := useFakeAgyHome(t)
+	useFakeAgyCache(t)
+	resetLatch()
+	writeFile(t, filepath.Join(home, ".gemini", "antigravity-acp", "acp_token.json"), validAcpJSON)
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "starts")
+	if runtime.GOOS == "windows" {
+		useFakeAgyBinShell(t, "@echo off\r\necho auth required: waiting for browser sign-in 1>&2\r\nping -n 30 127.0.0.1 >nul\r\n")
+	} else {
+		useFakeAgyBinShell(t, "#!/bin/sh\necho x >> '"+counter+"'\necho 'auth required: waiting for browser sign-in' >&2\nexec sleep 30\n")
+	}
+	appDir := t.TempDir()
+
+	res1 := FetchAgy(appDir, 1)
+	res2 := FetchAgy(appDir, 1)
+	if res1.Status == "online" || res2.Status == "online" {
+		t.Fatal("unexpected online result after auth-hang timeout")
+	}
+	if runtime.GOOS != "windows" {
+		if got := countExecs(t, counter); got != 1 {
+			t.Fatalf("auth-hang timed out: %d starts, want 1; repeated OAuth remains possible", got)
+		}
+	} else if !agyAuthLatch.failed {
+		t.Fatal("auth evidence on timeout must engage latch")
+	}
+}
+
+// TestAgyFetch_SilentTimeout_LatchesRepeatPolls: CLI молча висит (не успел
+// вывести auth). Hard no-browser режима нет, authenticated state на таймауте
+// установить нельзя → fail-closed latch до явного retry/смены кредов.
+func TestAgyFetch_SilentTimeout_LatchesRepeatPolls(t *testing.T) {
+	home := useFakeAgyHome(t)
+	useFakeAgyCache(t)
+	resetLatch()
+	writeFile(t, filepath.Join(home, ".gemini", "antigravity-acp", "acp_token.json"), validAcpJSON)
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "starts")
+	if runtime.GOOS == "windows" {
+		useFakeAgyBinShell(t, "@echo off\r\nping -n 30 127.0.0.1 >nul\r\n")
+	} else {
+		useFakeAgyBinShell(t, "#!/bin/sh\necho x >> '"+counter+"'\nexec sleep 30\n")
+	}
+	appDir := t.TempDir()
+
+	FetchAgy(appDir, 1)
+	FetchAgy(appDir, 1)
+	if runtime.GOOS != "windows" {
+		if got := countExecs(t, counter); got != 1 {
+			t.Fatalf("silent hang timed out: %d starts, want 1 (fail-closed latch)", got)
+		}
+	} else if !agyAuthLatch.failed {
+		t.Fatal("silent timeout must engage fail-closed latch")
+	}
+}
+
+// TestAgyFetch_InvalidJsonAuthEvidence_Latches: не-JSON вывод с auth-текстом
+// (exit 0) тоже не должен обходить latch.
+func TestAgyFetch_InvalidJsonAuthEvidence_Latches(t *testing.T) {
+	home := useFakeAgyHome(t)
+	useFakeAgyCache(t)
+	resetLatch()
+	counter := filepath.Join(t.TempDir(), "counter.txt")
+	// auth-текст в stdout вместо JSON, exit 0
+	if runtime.GOOS == "windows" {
+		useFakeAgyBinShell(t, "@echo off\r\necho auth required: session expired, please login\r\n")
+	} else {
+		useFakeAgyBinShell(t, "#!/bin/sh\necho x >> '"+counter+"'\necho 'auth required: session expired, please login'\nexit 0\n")
+	}
+	writeFile(t, filepath.Join(home, ".gemini", "antigravity-acp", "acp_token.json"), validAcpJSON)
+	appDir := t.TempDir()
+
+	res1 := FetchAgy(appDir, 10)
+	res2 := FetchAgy(appDir, 10)
+	if res1.Status == "online" || res2.Status == "online" {
+		t.Fatal("unexpected online result for invalid JSON with auth evidence")
+	}
+	if runtime.GOOS != "windows" {
+		if got := countExecs(t, counter); got != 1 {
+			t.Fatalf("invalid JSON with auth evidence: %d starts, want 1", got)
+		}
+	} else if !agyAuthLatch.failed {
+		t.Fatal("auth evidence in non-JSON output must engage latch")
+	}
+}
+
 // TestAgyFetch_Success_ClearsLatch: после auth-failure повтор возможен только
 // при смене кредов; если agy тогда отвечает успехом — latch снимается.
 func TestAgyFetch_Success_ClearsLatch(t *testing.T) {

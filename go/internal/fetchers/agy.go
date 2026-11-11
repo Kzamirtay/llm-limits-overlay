@@ -309,6 +309,14 @@ func resetAgyAuthLatch() {
 	agyAuthLatch.logged = false
 }
 
+// agyOutputAuthEvidence — stdout/stderr содержат признаки auth-проблемы.
+// Единый набор ключевых слов для всех веток FetchAgy.
+func agyOutputAuthEvidence(combinedLower string) bool {
+	return strings.Contains(combinedLower, "auth") ||
+		strings.Contains(combinedLower, "login") ||
+		strings.Contains(combinedLower, "unauthorized")
+}
+
 // ---- парсинг бакетов ----
 
 // AgyBuckets — 4 бакета аги.
@@ -502,7 +510,7 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 		// креды пропали/битые — exec не выполняется вообще (нет OAuth-риска)
 		resetAgyAuthLatch()
 		LogLine(appDir, "[agy] credentials missing, empty, malformed or irrelevant; NOT launching agy (blocks interactive OAuth).")
-		return fallbackAgy(appDir, nowIso, "auth required: agy credentials missing or invalid (run 'agy auth login')")
+		return fallbackAgy(appDir, nowIso, "auth required: agy credentials missing or invalid (sign in to AGY CLI interactively, then retry)")
 	}
 	if agyAuthLatch.failed && agyAuthLatch.fingerprint == credFp {
 		// auth-failure с тем же fingerprint кредов: НЕ запускаем agy повторно.
@@ -512,6 +520,15 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 			agyAuthLatch.logged = true
 		}
 		return fallbackAgy(appDir, nowIso, "agy auth failed (latched; awaiting credential change or explicit retry)")
+	}
+
+	// latchAuth фиксирует auth-failure для текущего fingerprint кредов:
+	// повторные опросы НЕ запускают agy, пока креды не изменятся или
+	// пользователь явно не запросит retry (SetAgyBypassCache).
+	latchAuth := func() {
+		agyAuthLatch.failed = true
+		agyAuthLatch.fingerprint = credFp
+		agyAuthLatch.logged = false
 	}
 
 	LogLine(appDir, "[live] running "+bin+" -p /usage --output-format json...")
@@ -524,17 +541,24 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		LogLine(appDir, fmt.Sprintf("[agy] timed out after %ds executing agy", timeoutSec))
-		return fallbackAgy(appDir, nowIso, fmt.Sprintf("timeout after %ds executing agy", timeoutSec))
+		// Таймаут: реальный OAuth-CLI в этом состоянии ждёт browser sign-in.
+		// auth evidence → точный latch; молчание → fail-closed latch
+		// (hard no-browser режима нет, authenticated state не установить).
+		combined := strings.ToLower(stdout.String() + " " + stderr.String())
+		latchAuth()
+		msg := fmt.Sprintf("agy timed out after %ds (unresponsive; fail-closed until retry or credential change)", timeoutSec)
+		if agyOutputAuthEvidence(combined) {
+			msg = fmt.Sprintf("auth required (agy timed out after %ds waiting; possible browser sign-in)", timeoutSec)
+		}
+		LogLine(appDir, "[agy] "+msg)
+		return fallbackAgy(appDir, nowIso, msg)
 	}
 	if err != nil {
 		combined := strings.ToLower(stdout.String() + " " + stderr.String())
 		msg := fmt.Sprintf("agy failed: %s", err.Error())
-		if strings.Contains(combined, "auth") || strings.Contains(combined, "login") || strings.Contains(combined, "unauthorized") {
+		if agyOutputAuthEvidence(combined) {
 			msg = "auth required"
-			agyAuthLatch.failed = true
-			agyAuthLatch.fingerprint = credFp
-			agyAuthLatch.logged = false
+			latchAuth()
 		}
 		LogLine(appDir, "[agy] "+msg)
 		return fallbackAgy(appDir, nowIso, msg)
@@ -542,8 +566,15 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 
 	parsed := extractLastJson(stdout.String())
 	if parsed == nil {
-		LogLine(appDir, "[agy] parse failed: invalid JSON output from agy")
-		return fallbackAgy(appDir, nowIso, "parse failed: invalid JSON output from agy")
+		combined := strings.ToLower(stdout.String() + " " + stderr.String())
+		msg := "parse failed: invalid JSON output from agy"
+		if agyOutputAuthEvidence(combined) {
+			// не-JSON вывод с auth-признаками — то же auth-failure
+			latchAuth()
+			msg = "auth required (non-JSON output from agy)"
+		}
+		LogLine(appDir, "[agy] "+msg)
+		return fallbackAgy(appDir, nowIso, msg)
 	}
 	statusStr := strings.ToUpper(getStr(parsed, "status"))
 	if statusStr == "ERROR" || statusStr == "FAILED" {
@@ -551,9 +582,7 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 		msg := "agy error: unknown"
 		if strings.Contains(strings.ToLower(respText), "auth") || strings.Contains(strings.ToLower(respText), "login") {
 			msg = "auth required"
-			agyAuthLatch.failed = true
-			agyAuthLatch.fingerprint = credFp
-			agyAuthLatch.logged = false
+			latchAuth()
 		} else if respText != "" {
 			msg = "agy error: " + respText
 		}
@@ -572,8 +601,14 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 	}
 	buckets := ParseAgyBuckets(inner)
 	if !agyBucketsHaveRealData(buckets) {
-		// валидный JSON, но нет ни одного измеренного бакета — не online
+		// валидный JSON, но нет ни одного измеренного бакета — не online.
+		// auth-признаки в ответе трактуем как auth-failure (latch).
+		combined := strings.ToLower(getStr(parsed, "response") + " " + stdout.String() + " " + stderr.String())
 		msg := "agy returned no quota data"
+		if agyOutputAuthEvidence(combined) {
+			latchAuth()
+			msg = "auth required (no quota data; auth markers in agy response)"
+		}
 		LogLine(appDir, "[agy] "+msg)
 		res := fallbackAgy(appDir, nowIso, msg)
 		res.Raw = parsed

@@ -24,3 +24,20 @@ func TestFormatPercent(t *testing.T) {
 		}
 	}
 }
+
+// TestAgyBucketPctText — заглушка (placeholder) даёт "--" без бара,
+// реальное значение (включая честный 0%%) даёт отформатированный процент с баром.
+func TestAgyBucketPctText(t *testing.T) {
+	text, ok := agyBucketPctText(true, 0.0)
+	if text != "--" || ok {
+		t.Errorf("placeholder: got (%q, %v); want (\"--\", false)", text, ok)
+	}
+	text, ok = agyBucketPctText(false, 0.0)
+	if text != "0%" || !ok {
+		t.Errorf("real 0%%: got (%q, %v); want (\"0%%\", true)", text, ok)
+	}
+	text, ok = agyBucketPctText(false, 42.7)
+	if text != "42,7%" || !ok {
+		t.Errorf("real 42.7%%: got (%q, %v); want (\"42,7%%\", true)", text, ok)
+	}
+}
