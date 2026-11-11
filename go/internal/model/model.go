@@ -5,6 +5,10 @@ type Bucket struct {
 	UsedPercent  float64 `json:"used_percent"`
 	UsedFraction float64 `json:"used_fraction"`
 	ResetIn      string  `json:"reset_in"`
+	// Placeholder — true когда значение является заглушкой (нет измеренных
+	// данных), а не реальным «0%% использовано». Слой отображения обязан
+	// рисовать «--»/«нет данных» вместо выдуманного процента.
+	Placeholder bool `json:"placeholder,omitempty"`
 }
 
 type KimiInfo struct {

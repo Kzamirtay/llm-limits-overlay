@@ -354,6 +354,11 @@ func renderHeader(name, status, lastUpdated string) {
 }
 
 func renderBucket(label string, b model.Bucket) {
+	if b.Placeholder {
+		// заглушка: нет измеренных данных — честное «нет данных», не выдуманный 0%%
+		fmt.Printf("       %s  нет данных  reset --\n", label)
+		return
+	}
 	fmt.Printf("       %s  %s%%  reset %s\n", label, trimFloat(b.UsedPercent), safe(b.ResetIn))
 }
 
@@ -514,6 +519,7 @@ func bucketJson(b model.Bucket) map[string]interface{} {
 		"used_percent":  b.UsedPercent,
 		"used_fraction": b.UsedFraction,
 		"reset_in":      b.ResetIn,
+		"placeholder":   b.Placeholder,
 	}
 }
 

@@ -408,6 +408,15 @@ func formatPercent(pct float64) string {
 	return strings.Replace(s, ".", ",", 1)
 }
 
+// agyBucketPctText — для заглушек (нет измеренных данных) возвращает "--"
+// вместо выдуманного "0%"; второе значение false означает «не рисовать бар».
+func agyBucketPctText(placeholder bool, pct float64) (string, bool) {
+	if placeholder {
+		return "--", false
+	}
+	return formatPercent(pct), true
+}
+
 func getPercentColorAndFont(pct, frac float64, r *Renderer) (uint32, uintptr) {
 	if frac >= 1.0 || pct >= 100.0 {
 		return colorPercent100, r.fontRowBold
@@ -711,6 +720,7 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 			g5hPct, g5hFrac, g5hReset := 0.0, 0.0, "--"
 			c7dPct, c7dFrac, c7dReset := 0.0, 0.0, "--"
 			c5hPct, c5hFrac, c5hReset := 0.0, 0.0, "--"
+			g7dPh, g5hPh, c7dPh, c5hPh := true, true, true, true
 
 			if snap != nil {
 				status = snap.AgyStatus
@@ -724,18 +734,22 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 				g7dPct = snap.GeminiWeekly.UsedPercent
 				g7dFrac = snap.GeminiWeekly.UsedFraction
 				g7dReset = snap.GeminiWeekly.ResetIn
+				g7dPh = snap.GeminiWeekly.Placeholder
 
 				g5hPct = snap.Gemini5h.UsedPercent
 				g5hFrac = snap.Gemini5h.UsedFraction
 				g5hReset = snap.Gemini5h.ResetIn
+				g5hPh = snap.Gemini5h.Placeholder
 
 				c7dPct = snap.ClaudeWeekly.UsedPercent
 				c7dFrac = snap.ClaudeWeekly.UsedFraction
 				c7dReset = snap.ClaudeWeekly.ResetIn
+				c7dPh = snap.ClaudeWeekly.Placeholder
 
 				c5hPct = snap.Claude5h.UsedPercent
 				c5hFrac = snap.Claude5h.UsedFraction
 				c5hReset = snap.Claude5h.ResetIn
+				c5hPh = snap.Claude5h.Placeholder
 			} else if st != nil {
 				status = st.Status
 				updated = st.LastUpdated
@@ -752,16 +766,26 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 			// Gemini 7d (Weekly first)
 			g7dY := curY + 28
 			r.drawString(formatResetTimeLabel(g7dReset), contentX, g7dY, 150, 16, r.fontRow, colorLabel, false)
-			g7dColor, g7dFont := getPercentColorAndFont(g7dPct, g7dFrac, r)
-			r.drawString(formatPercent(g7dPct), contentX+contentW-80, g7dY, 80, 16, g7dFont, g7dColor, true)
-			r.drawProgressBar(contentX, curY+45, contentW, barHeight, g7dFrac)
+			g7dText, g7dOk := agyBucketPctText(g7dPh, g7dPct)
+			if !g7dOk {
+				r.drawString(g7dText, contentX+contentW-80, g7dY, 80, 16, r.fontRow, colorLabel, true)
+			} else {
+				g7dColor, g7dFont := getPercentColorAndFont(g7dPct, g7dFrac, r)
+				r.drawString(g7dText, contentX+contentW-80, g7dY, 80, 16, g7dFont, g7dColor, true)
+				r.drawProgressBar(contentX, curY+45, contentW, barHeight, g7dFrac)
+			}
 
 			// Gemini 5h
 			g5hY := curY + 58
 			r.drawString(formatResetTimeLabel(g5hReset), contentX, g5hY, 150, 16, r.fontRow, colorLabel, false)
-			g5hColor, g5hFont := getPercentColorAndFont(g5hPct, g5hFrac, r)
-			r.drawString(formatPercent(g5hPct), contentX+contentW-80, g5hY, 80, 16, g5hFont, g5hColor, true)
-			r.drawProgressBar(contentX, curY+75, contentW, barHeight, g5hFrac)
+			g5hText, g5hOk := agyBucketPctText(g5hPh, g5hPct)
+			if !g5hOk {
+				r.drawString(g5hText, contentX+contentW-80, g5hY, 80, 16, r.fontRow, colorLabel, true)
+			} else {
+				g5hColor, g5hFont := getPercentColorAndFont(g5hPct, g5hFrac, r)
+				r.drawString(g5hText, contentX+contentW-80, g5hY, 80, 16, g5hFont, g5hColor, true)
+				r.drawProgressBar(contentX, curY+75, contentW, barHeight, g5hFrac)
+			}
 
 			// Divider: Color.FromArgb(0x18, 0, 0, 0), Height 0.8
 			divY := curY + 89
@@ -776,16 +800,26 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 			// Claude 7d (Weekly first)
 			c7dY := curY + 117
 			r.drawString(formatResetTimeLabel(c7dReset), contentX, c7dY, 150, 16, r.fontRow, colorLabel, false)
-			c7dColor, c7dFont := getPercentColorAndFont(c7dPct, c7dFrac, r)
-			r.drawString(formatPercent(c7dPct), contentX+contentW-80, c7dY, 80, 16, c7dFont, c7dColor, true)
-			r.drawProgressBar(contentX, curY+134, contentW, barHeight, c7dFrac)
+			c7dText, c7dOk := agyBucketPctText(c7dPh, c7dPct)
+			if !c7dOk {
+				r.drawString(c7dText, contentX+contentW-80, c7dY, 80, 16, r.fontRow, colorLabel, true)
+			} else {
+				c7dColor, c7dFont := getPercentColorAndFont(c7dPct, c7dFrac, r)
+				r.drawString(c7dText, contentX+contentW-80, c7dY, 80, 16, c7dFont, c7dColor, true)
+				r.drawProgressBar(contentX, curY+134, contentW, barHeight, c7dFrac)
+			}
 
 			// Claude 5h
 			c5hY := curY + 147
 			r.drawString(formatResetTimeLabel(c5hReset), contentX, c5hY, 150, 16, r.fontRow, colorLabel, false)
-			c5hColor, c5hFont := getPercentColorAndFont(c5hPct, c5hFrac, r)
-			r.drawString(formatPercent(c5hPct), contentX+contentW-80, c5hY, 80, 16, c5hFont, c5hColor, true)
-			r.drawProgressBar(contentX, curY+164, contentW, barHeight, c5hFrac)
+			c5hText, c5hOk := agyBucketPctText(c5hPh, c5hPct)
+			if !c5hOk {
+				r.drawString(c5hText, contentX+contentW-80, c5hY, 80, 16, r.fontRow, colorLabel, true)
+			} else {
+				c5hColor, c5hFont := getPercentColorAndFont(c5hPct, c5hFrac, r)
+				r.drawString(c5hText, contentX+contentW-80, c5hY, 80, 16, c5hFont, c5hColor, true)
+				r.drawProgressBar(contentX, curY+164, contentW, barHeight, c5hFrac)
+			}
 
 			curY += cardH
 		}

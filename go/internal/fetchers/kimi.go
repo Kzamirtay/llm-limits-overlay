@@ -166,6 +166,8 @@ func bucketFromMap(m map[string]interface{}) model.Bucket {
 		UsedPercent:  getFloat(m, "used_percent", 0),
 		UsedFraction: frac,
 		ResetIn:      getStr(m, "reset_in"),
+		// Явная заглушка (аги fallback-бакеты): не рисовать как «0%% использовано».
+		Placeholder: getBool(m, "placeholder") || getStr(m, "level") == "unknown",
 	}
 }
 

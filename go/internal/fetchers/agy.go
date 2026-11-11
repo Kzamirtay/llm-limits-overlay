@@ -2,6 +2,7 @@ package fetchers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,9 +28,19 @@ var (
 	agyBypassCache bool
 )
 
-func SetAgyBypassCache(v bool) { agyBypassCache = v }
+// SetAgyBypassCache — форсирует живой запуск agy (CLI --no-cache, GUI force
+// refresh). Это же ЯВНЫЙ retry пользователя после auth-failure: снимаем latch.
+func SetAgyBypassCache(v bool) {
+	agyBypassCache = v
+	if v {
+		resetAgyAuthLatch()
+	}
+}
 
 func agyCachePath() string {
+	if agyCacheFileOverride != "" {
+		return agyCacheFileOverride
+	}
 	return filepath.Join(os.TempDir(), "llm_limits_agy_usage_cache.json")
 }
 
@@ -160,29 +171,142 @@ func agyAuthPaths(home, localAppData string) []string {
 	return paths
 }
 
-// CheckAgyAuth — токен-файл существует и не пуст (блок OAuth-попапа).
-// Принимает любой из известных файлов с кредами agy:
-//   - ~/.gemini/antigravity-acp/acp_token.json (AGY 1.5.4 — основной)
-//   - ~/.gemini/oauth_creds.json (реальный путь agy CLI)
-//   - ~/.gemini/antigravity-cli/antigravity-oauth-token (исторический)
-//   - %LOCALAPPDATA%\.gemini\... — альтернативный Windows-путь
+// CheckAgyAuth — есть ли структурно валидные креды agy (read-only проверка).
+// Файл должен существовать, быть не директорией, непустым и, для JSON-файлов,
+// содержать обязательные непустые поля. Наличие валидного refresh_token не
+// гарантирует, что токен не отозван — окончательную проверку делает сам agy.
 func CheckAgyAuth() bool {
-	home := userHome()
+	ok, _ := agyAuthState()
+	return ok
+}
+
+// agyAuthState находит первый структурно валидный файл кредов.
+// Возвращает ok=false, когда креды отсутствуют/пустые/битые/нерелевантные, и
+// fingerprint = "<path>:<sha256>" принятого файла — меняется при реальном
+// изменении кредов (основа latch-защиты от повторных OAuth-запусков).
+func agyAuthState() (bool, string) {
+	home := agyHomeOverride
+	if home == "" {
+		home = userHome()
+	}
 	la := ""
 	if runtime.GOOS == "windows" {
 		la = os.Getenv("LOCALAPPDATA")
 	}
-	for _, p := range agyAuthPaths(home, la) {
-		if fileNonEmpty(p) {
-			return true
-		}
-	}
-	return false
+	return agyAuthStateForPaths(agyAuthPaths(home, la))
 }
 
-func fileNonEmpty(p string) bool {
+// agyHomeOverride / agyCacheFileOverride — точки внедрения для тестов:
+// позволяют проверять production-путь без касания реального HOME и общего кэша.
+var agyHomeOverride string
+var agyCacheFileOverride string
+
+func agyAuthStateForPaths(paths []string) (bool, string) {
+	for _, p := range paths {
+		if validAgyCredFile(p) {
+			return true, agyCredFingerprint(p)
+		}
+	}
+	return false, ""
+}
+
+// validAgyCredFile — структурная read-only валидация одного файла кредов.
+func validAgyCredFile(p string) bool {
 	fi, err := os.Stat(p)
-	return err == nil && fi.Size() > 0
+	if err != nil || fi.IsDir() || fi.Size() == 0 {
+		return false
+	}
+	base := filepath.Base(p)
+	switch base {
+	case "acp_token.json":
+		return validAcpCreds(p)
+	case "oauth_creds.json":
+		return validOauthCreds(p)
+	default:
+		// antigravity-oauth-token (legacy) — непрозрачный файл, не JSON:
+		// проверяем только непустоту (историческое поведение).
+		return true
+	}
+}
+
+// validAcpCreds: AGY 1.5.4 ACP credentials — JSON-объект с обязательными
+// непустыми полями (проверено против реального acp_token.json: root keys
+// client_id, client_secret, refresh_token, token_uri, scopes, project_id).
+func validAcpCreds(p string) bool {
+	m, ok := readJSONObj(p)
+	if !ok {
+		return false
+	}
+	for _, k := range []string{"client_id", "refresh_token", "token_uri", "project_id"} {
+		if strings.TrimSpace(getStr(m, k)) == "" {
+			return false
+		}
+	}
+	// scopes: непустой массив или непустая строка
+	switch v := m["scopes"].(type) {
+	case []interface{}:
+		if len(v) == 0 {
+			return false
+		}
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return false
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// validOauthCreds: OAuth credentials (Gemini CLI формат). Релевантны для AGY
+// только с непустым refresh_token — без него silent re-auth невозможен.
+func validOauthCreds(p string) bool {
+	m, ok := readJSONObj(p)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(getStr(m, "refresh_token")) != ""
+}
+
+// readJSONObj — прочитать файл как JSON-объект (read-only).
+func readJSONObj(p string) (map[string]interface{}, bool) {
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
+		return nil, false
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil || m == nil {
+		return nil, false
+	}
+	return m, true
+}
+
+// agyCredFingerprint — путь + sha256 содержимого; в логах/отчётах не печатаем
+// само содержимое (секреты), только необратимый хэш.
+func agyCredFingerprint(p string) string {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return p
+	}
+	sum := sha256.Sum256(b)
+	return p + ":" + fmt.Sprintf("%x", sum[:8])
+}
+
+// agyAuthLatch — защита от ПОВТОРНЫХ запусков agy после auth-failure:
+// при ошибке авторизации с фиксированным fingerprint кредов последующие
+// минутные опросы НЕ запускают agy, пока креды реально не изменятся или
+// пользователь явно не запросит retry (force refresh / --no-cache).
+// Это НЕ cooldown: повторный запуск возможен только при смене fingerprint.
+var agyAuthLatch struct {
+	failed      bool
+	fingerprint string
+	logged      bool
+}
+
+func resetAgyAuthLatch() {
+	agyAuthLatch.failed = false
+	agyAuthLatch.fingerprint = ""
+	agyAuthLatch.logged = false
 }
 
 // ---- парсинг бакетов ----
@@ -195,14 +319,11 @@ type AgyBuckets struct {
 	ClaudeWeekly map[string]interface{}
 }
 
-// ParseAgyBuckets — groups[] -> бакеты квот.
+// ParseAgyBuckets — groups[] -> бакеты квот. Бакет без числового
+// remaining_fraction НЕ считается измеренными данными: слот остаётся
+// заглушкой (placeholder=true), а не выдуманным «0%% использовано».
 func ParseAgyBuckets(resp map[string]interface{}) AgyBuckets {
-	out := AgyBuckets{
-		Gemini5h:     defaultAgyBucket("ok"),
-		GeminiWeekly: defaultAgyBucket("ok"),
-		Claude5h:     defaultAgyBucket("ok"),
-		ClaudeWeekly: defaultAgyBucket("ok"),
-	}
+	out := defaultAgyBuckets("unknown")
 	if resp == nil {
 		return out
 	}
@@ -227,11 +348,19 @@ func ParseAgyBuckets(resp map[string]interface{}) AgyBuckets {
 			bid := strings.ToLower(getStr(b, "id") + " " + getStr(b, "bucketId"))
 			window := strings.ToLower(getStr(b, "window"))
 
-			frac := 1.0
+			// без числового remaining_fraction данных о квоте нет —
+			// оставляем заглушку, не выдумываем 100%% остатка
+			var frac float64
+			hasFrac := false
 			if hasNonNull(b, "remaining_fraction") {
-				frac = getFloat(b, "remaining_fraction", 1.0)
+				frac = getFloat(b, "remaining_fraction", -1)
+				hasFrac = frac >= 0
 			} else if hasNonNull(b, "remainingFraction") {
-				frac = getFloat(b, "remainingFraction", 1.0)
+				frac = getFloat(b, "remainingFraction", -1)
+				hasFrac = frac >= 0
+			}
+			if !hasFrac {
+				continue
 			}
 			resetTime := getStr(b, "reset_time")
 			if resetTime == "" {
@@ -284,11 +413,38 @@ func ParseAgyBuckets(resp map[string]interface{}) AgyBuckets {
 }
 
 func defaultAgyBucket(level string) map[string]interface{} {
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"percent": 100.0, "fraction": 1.0,
 		"used_percent": 0.0, "used_fraction": 0.0,
 		"reset_in": "N/A", "reset_time": "", "level": level,
 	}
+	if level == "unknown" {
+		// Явная заглушка: числовые поля сохраняют форму JSON, но
+		// placeholder=true запрещает слою отображения рисовать «0%%» как факт.
+		m["placeholder"] = true
+	}
+	return m
+}
+
+// agyBucketsHaveRealData — true, если есть хотя бы один бакет с реальными
+// измеренными данными (не заглушка). Провайдер без ни одного валидного
+// бакета не должен показываться как online.
+func agyBucketsHaveRealData(b AgyBuckets) bool {
+	for _, m := range []map[string]interface{}{
+		b.Gemini5h, b.GeminiWeekly, b.Claude5h, b.ClaudeWeekly,
+	} {
+		if m == nil {
+			continue
+		}
+		if ph, ok := m["placeholder"].(bool); ok && ph {
+			continue
+		}
+		if getStr(m, "level") == "unknown" {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func round1(f float64) float64 {
@@ -320,15 +476,20 @@ type AgyResult struct {
 	CacheHit    bool
 }
 
-// FetchAgy — кэш -> бинарник -> токен -> exec. appDir для лога.
+// FetchAgy — кэш -> бинарник -> валидация кредов -> exec (с latch-защитой).
+// appDir для лога.
 func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 	nowIso := NowIso()
 
 	if rec := loadAgyCache(); rec != nil {
-		return &AgyResult{
-			Status: "online", LastUpdated: cacheTsToIso(rec.Timestamp),
-			Buckets: ParseAgyBuckets(rec.Data), Raw: rec.Raw, CacheHit: true,
+		buckets := ParseAgyBuckets(rec.Data)
+		if agyBucketsHaveRealData(buckets) {
+			return &AgyResult{
+				Status: "online", LastUpdated: cacheTsToIso(rec.Timestamp),
+				Buckets: buckets, Raw: rec.Raw, CacheHit: true,
+			}
 		}
+		// кэш без валидных бакетов — не выдаём за online, идём за живыми данными
 	}
 
 	bin := FindAgyBinary()
@@ -336,9 +497,21 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 		LogLine(appDir, "[agy] missing agy (not found in LLM_LIMITS_AGY_BIN, PATH, or AppData)")
 		return fallbackAgy(appDir, nowIso, "missing agy")
 	}
-	if !CheckAgyAuth() {
-		LogLine(appDir, "[agy] Token file missing or empty; blocking interactive OAuth popup.")
-		return fallbackAgy(appDir, nowIso, "auth required: agy not logged in (run 'agy auth login')")
+	authOK, credFp := agyAuthState()
+	if !authOK {
+		// креды пропали/битые — exec не выполняется вообще (нет OAuth-риска)
+		resetAgyAuthLatch()
+		LogLine(appDir, "[agy] credentials missing, empty, malformed or irrelevant; NOT launching agy (blocks interactive OAuth).")
+		return fallbackAgy(appDir, nowIso, "auth required: agy credentials missing or invalid (run 'agy auth login')")
+	}
+	if agyAuthLatch.failed && agyAuthLatch.fingerprint == credFp {
+		// auth-failure с тем же fingerprint кредов: НЕ запускаем agy повторно.
+		// Освобождение: реальное изменение кредов или явный retry (SetAgyBypassCache).
+		if !agyAuthLatch.logged {
+			LogLine(appDir, "[agy] auth failure latched for current credentials; not relaunching agy until credentials change or explicit retry.")
+			agyAuthLatch.logged = true
+		}
+		return fallbackAgy(appDir, nowIso, "agy auth failed (latched; awaiting credential change or explicit retry)")
 	}
 
 	LogLine(appDir, "[live] running "+bin+" -p /usage --output-format json...")
@@ -359,6 +532,9 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 		msg := fmt.Sprintf("agy failed: %s", err.Error())
 		if strings.Contains(combined, "auth") || strings.Contains(combined, "login") || strings.Contains(combined, "unauthorized") {
 			msg = "auth required"
+			agyAuthLatch.failed = true
+			agyAuthLatch.fingerprint = credFp
+			agyAuthLatch.logged = false
 		}
 		LogLine(appDir, "[agy] "+msg)
 		return fallbackAgy(appDir, nowIso, msg)
@@ -375,6 +551,9 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 		msg := "agy error: unknown"
 		if strings.Contains(strings.ToLower(respText), "auth") || strings.Contains(strings.ToLower(respText), "login") {
 			msg = "auth required"
+			agyAuthLatch.failed = true
+			agyAuthLatch.fingerprint = credFp
+			agyAuthLatch.logged = false
 		} else if respText != "" {
 			msg = "agy error: " + respText
 		}
@@ -391,11 +570,21 @@ func FetchAgy(appDir string, timeoutSec int) *AgyResult {
 	} else {
 		inner = parsed
 	}
+	buckets := ParseAgyBuckets(inner)
+	if !agyBucketsHaveRealData(buckets) {
+		// валидный JSON, но нет ни одного измеренного бакета — не online
+		msg := "agy returned no quota data"
+		LogLine(appDir, "[agy] "+msg)
+		res := fallbackAgy(appDir, nowIso, msg)
+		res.Raw = parsed
+		return res
+	}
+	resetAgyAuthLatch() // успех — снимаем latch
 	saveAgyCache(parsed, inner)
 
 	return &AgyResult{
 		Status: "online", LastUpdated: nowIso,
-		Buckets: ParseAgyBuckets(inner), Raw: parsed,
+		Buckets: buckets, Raw: parsed,
 	}
 }
 
@@ -445,9 +634,17 @@ func fallbackAgy(appDir, nowIso, errMsg string) *AgyResult {
 		lastUpd = nowIso
 	}
 	buckets := defaultAgyBuckets("unknown")
-	// если есть фрагмент/корень с бакетами — берём их
+	// если есть фрагмент/корень с бакетами — берём их (cached valid stale не стираем)
 	if frag := loadCachedProviderBlocks(appDir, "agy"); frag != nil {
 		b := agyBucketsFromBlock(frag)
+		if b == nil {
+			// корневой limits.json: бакеты лежат в data.agy.*
+			if d := getMap(frag, "data"); d != nil {
+				if agyData := getMap(d, "agy"); agyData != nil {
+					b = agyBucketsFromBlock(agyData)
+				}
+			}
+		}
 		if b != nil {
 			buckets = *b
 		}
