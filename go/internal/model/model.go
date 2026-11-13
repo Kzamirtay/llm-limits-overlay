@@ -1,5 +1,7 @@
 package model
 
+import "strings"
+
 // Bucket — одно окно лимита (kimi-окно или аги-бакет).
 type Bucket struct {
 	UsedPercent  float64 `json:"used_percent"`
@@ -64,6 +66,19 @@ type OpenCodeInfo struct {
 	Rolling     Window
 	Weekly      Window
 	Monthly     Window
+}
+
+// LimitKey — ключ настройки limits.<type> для этого окна: 30d / 7d / 5h.
+func (w Window) LimitKey() string {
+	switch w.Name {
+	case "30д":
+		return "30d"
+	case "7д":
+		return "7d"
+	case "5ч":
+		return "5h"
+	}
+	return strings.ToLower(w.Name)
 }
 
 // Windows — окна в порядке отображения (как у остальных карточек:

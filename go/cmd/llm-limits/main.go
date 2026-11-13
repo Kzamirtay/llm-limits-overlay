@@ -30,6 +30,7 @@ type options struct {
 
 var colorEnabled bool
 var providers []config.Provider
+var activeCfg *config.Config
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -68,6 +69,7 @@ func run(args []string) int {
 	}
 	cfg := config.Load(cfgPath)
 	providers = cfg.EffectiveProviders()
+	activeCfg = cfg
 
 	if opt.provider != "" {
 		found := false
@@ -300,58 +302,111 @@ func render(opt *options, snap *model.Snapshot) {
 		}
 		switch p.Type {
 		case "agy":
+			gemini := showWin(p, "gemini")
+			claude := showWin(p, "claude")
+			if !gemini && !claude {
+				continue
+			}
 			renderHeader(p.Title, st.Status, st.LastUpdated)
-			renderBucket("  gemini 7d", snap.GeminiWeekly)
-			renderBucket("  gemini 5h", snap.Gemini5h)
-			renderBucket("  claude 7d", snap.ClaudeWeekly)
-			renderBucket("  claude 5h", snap.Claude5h)
+			if gemini {
+				renderBucket("  gemini 7d", snap.GeminiWeekly)
+				renderBucket("  gemini 5h", snap.Gemini5h)
+			}
+			if claude {
+				renderBucket("  claude 7d", snap.ClaudeWeekly)
+				renderBucket("  claude 5h", snap.Claude5h)
+			}
 		case "openrouter":
 			if st.OpenRouter == nil {
 				continue
 			}
 			or := st.OpenRouter
-			renderHeader(p.Title, st.Status, st.LastUpdated)
-			pct := fmt.Sprintf("%s%% used", trimFloat(or.UsedPercent))
-			if or.Limit <= 0 {
-				pct += " (no limit)"
+			showLimit := showWin(p, "limit")
+			showFree := showWin(p, "free") && or.FreeDailyLimit > 0
+			if !showLimit && !showFree {
+				continue
 			}
-			fmt.Printf("       %s  reset %s  free %d/%d  rem. $%s\n",
-				pct, safe(or.ResetIn), or.FreeDailyUsed, or.FreeDailyLimit,
-				fmt.Sprintf("%.2f", or.LimitRemaining))
+			renderHeader(p.Title, st.Status, st.LastUpdated)
+			if showLimit {
+				pct := fmt.Sprintf("%s%% used", trimFloat(or.UsedPercent))
+				if or.Limit <= 0 {
+					pct += " (no limit)"
+				}
+				line := fmt.Sprintf("       %s  reset %s", pct, safe(or.ResetIn))
+				if showFree {
+					line += fmt.Sprintf("  free %d/%d", or.FreeDailyUsed, or.FreeDailyLimit)
+				}
+				line += fmt.Sprintf("  rem. $%s", fmt.Sprintf("%.2f", or.LimitRemaining))
+				fmt.Println(line)
+			} else {
+				fmt.Printf("       free %d/%d  rem. $%s\n", or.FreeDailyUsed, or.FreeDailyLimit,
+					fmt.Sprintf("%.2f", or.LimitRemaining))
+			}
 		case "opencode":
 			if st.OpenCode == nil {
 				continue
 			}
-			renderHeader(p.Title, st.Status, st.LastUpdated)
+			windows := []model.Window{}
 			for _, w := range st.OpenCode.Windows() {
+				if showWin(p, w.LimitKey()) {
+					windows = append(windows, w)
+				}
+			}
+			if len(windows) == 0 {
+				continue
+			}
+			renderHeader(p.Title, st.Status, st.LastUpdated)
+			for _, w := range windows {
 				renderWindow("  "+w.Name, w)
 			}
 		case "codex":
 			if st.Codex == nil {
 				continue
 			}
-			renderHeader(p.Title, st.Status, st.LastUpdated)
-			label := st.Codex.PrimaryName
-			if label == "" {
-				label = "30д"
+			rows := [][2]interface{}{}
+			if showWin(p, "primary") {
+				label := st.Codex.PrimaryName
+				if label == "" {
+					label = "30д"
+				}
+				rows = append(rows, [2]interface{}{label, st.Codex.Primary})
 			}
-			renderBucket("  "+label, st.Codex.Primary)
-			if st.Codex.Secondary != nil {
+			if st.Codex.Secondary != nil && showWin(p, "secondary") {
 				secLabel := st.Codex.SecondaryName
 				if secLabel == "" {
 					secLabel = "secondary"
 				}
-				renderBucket("  "+secLabel, *st.Codex.Secondary)
+				rows = append(rows, [2]interface{}{secLabel, *st.Codex.Secondary})
+			}
+			if len(rows) == 0 {
+				continue
+			}
+			renderHeader(p.Title, st.Status, st.LastUpdated)
+			for _, r := range rows {
+				renderBucket("  "+r[0].(string), r[1].(model.Bucket))
 			}
 		default: // kimi
 			if st.Kimi == nil {
 				continue
 			}
+			show7d, show5h := showWin(p, "7d"), showWin(p, "5h")
+			if !show7d && !show5h {
+				continue
+			}
 			renderHeader(p.Title, st.Status, st.LastUpdated)
-			renderBucket("  7d", st.Kimi.Limit7d)
-			renderBucket("  5h", st.Kimi.Limit5h)
+			if show7d {
+				renderBucket("  7d", st.Kimi.Limit7d)
+			}
+			if show5h {
+				renderBucket("  5h", st.Kimi.Limit5h)
+			}
 		}
 	}
+}
+
+// showWin — включено ли окно key для провайдера (overlay.config.json -> "limits").
+func showWin(p config.Provider, key string) bool {
+	return activeCfg.ShowWindow(p.Type, key)
 }
 
 func renderHeader(name, status, lastUpdated string) {

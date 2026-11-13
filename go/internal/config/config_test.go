@@ -110,6 +110,72 @@ func TestLoad_WithBOM_BrokenJSON(t *testing.T) {
 	}
 }
 
+// TestLoad_Limits — какие окна показывать: false скрывает, отсутствие ключа
+// или неизвестный тип показывают; небулевы значения игнорируются.
+func TestLoad_Limits(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "overlay.config.json")
+
+	content := `{
+		"limits": {
+			"kimi": {"7d": false},
+			"opencode": {"5h": false, "30d": true, "bogus": false, "7d": "no"},
+			"unknown-type": {"5h": false}
+		}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg := Load(cfgPath)
+	cases := []struct {
+		typeName string
+		window   string
+		want     bool
+	}{
+		{"kimi", "7d", false},
+		{"KIMI", "7D", false}, // регистронезависимо
+		{"kimi", "5h", true},  // ключа нет — показываем
+		{"opencode", "5h", false},
+		{"opencode", "30d", true},
+		{"opencode", "7d", true}, // небулево значение игнорируется
+		{"codex", "primary", true},
+		{"agy", "gemini", true},
+	}
+	for _, c := range cases {
+		if got := cfg.ShowWindow(c.typeName, c.window); got != c.want {
+			t.Errorf("ShowWindow(%q, %q) = %v; want %v", c.typeName, c.window, got, c.want)
+		}
+	}
+
+	// Конфиг без секции "limits" и nil-конфиг: всё видно.
+	empty := &Config{}
+	if !empty.ShowWindow("kimi", "7d") {
+		t.Error("empty config must show every window")
+	}
+	var nilCfg *Config
+	if !nilCfg.ShowWindow("kimi", "7d") {
+		t.Error("nil config must show every window")
+	}
+}
+
+// TestLoad_LimitsNotABoolObject — мусор в "limits" не ломает загрузку.
+func TestLoad_LimitsJunkIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "overlay.config.json")
+	content := `{"limits": {"kimi": "all", "opencode": [1,2]}, "providers": [{"id": "kimi", "type": "kimi"}]}`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	cfg := Load(cfgPath)
+	if len(cfg.Providers) != 1 {
+		t.Fatalf("providers = %d, want 1", len(cfg.Providers))
+	}
+	if !cfg.ShowWindow("kimi", "7d") {
+		t.Error("junk limits must not hide windows")
+	}
+}
+
 func TestLoad_LegacyKeysIgnored(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "overlay.config.json")

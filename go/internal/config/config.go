@@ -56,6 +56,27 @@ type Config struct {
 	ClickThrough       bool
 	ClickThroughHotkey string
 	Providers          []Provider // пусто = дефолты
+	// Limits — какие окна (периодные лимиты) показывать для каждого типа:
+	// {"kimi":{"7d":false},"opencode":{"5h":false},...}. Отсутствующая запись
+	// или отсутствующий ключ = показывать; false = строка скрыта.
+	Limits map[string]map[string]bool
+}
+
+// ShowWindow — показывать ли окно key у провайдера типа typeName.
+// Ключи регистронезависимы; неизвестный тип/ключ не скрывает ничего.
+func (c *Config) ShowWindow(typeName, key string) bool {
+	if c == nil || len(c.Limits) == 0 {
+		return true
+	}
+	byType, ok := c.Limits[strings.ToLower(strings.TrimSpace(typeName))]
+	if !ok {
+		return true
+	}
+	v, ok := byType[strings.ToLower(strings.TrimSpace(key))]
+	if !ok {
+		return true
+	}
+	return v
 }
 
 func Defaults() []Provider {
@@ -115,6 +136,9 @@ func Load(path string) *Config {
 	}
 	if rawProviders, ok := root["providers"].([]interface{}); ok {
 		cfg.Providers = parseProviders(rawProviders)
+	}
+	if rawLimits, ok := root["limits"].(map[string]interface{}); ok {
+		cfg.Limits = parseLimits(rawLimits)
 	}
 	return cfg
 }
@@ -177,6 +201,39 @@ func parseProviders(list []interface{}) []Provider {
 			}
 		}
 		out = append(out, p)
+	}
+	return out
+}
+
+// parseLimits разбирает "limits": {"<type>": {"<window>": false}}.
+// Неизвестные типы и небулевы значения игнорируются без ошибки (старый конфиг
+// обязан грузиться молча).
+func parseLimits(raw map[string]interface{}) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for typeName, rawType := range raw {
+		byWindow, ok := rawType.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		t := strings.ToLower(strings.TrimSpace(typeName))
+		if t == "" {
+			continue
+		}
+		acc := map[string]bool{}
+		for window, rawVal := range byWindow {
+			v, ok := rawVal.(bool)
+			if !ok {
+				continue
+			}
+			w := strings.ToLower(strings.TrimSpace(window))
+			if w == "" {
+				continue
+			}
+			acc[w] = v
+		}
+		if len(acc) > 0 {
+			out[t] = acc
+		}
 	}
 	return out
 }

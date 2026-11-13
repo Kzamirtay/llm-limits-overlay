@@ -231,6 +231,30 @@ By default the overlay shows the built-in four: **KIMI**, **OPENROUTER**, **OPEN
 - No `quota`/`probe` fields are used — each type keeps its own fetch logic as-is.
 - When `providers` is absent, the built-in defaults (`kimi`, `openrouter`, `opencode`, `agy`) are used — an old config keeps working unchanged.
 
+### Which periodic windows to show (`limits`)
+
+The `limits` object hides individual periodic windows per provider **type**: the card height and the CLI table shrink accordingly, and a provider whose windows are all hidden disappears from the overlay.
+
+| `type` | window keys |
+| --- | --- |
+| `kimi` | `7d`, `5h` |
+| `openrouter` | `limit` (key/account budget row), `free` (free-pool row) |
+| `opencode` | `30d`, `7d`, `5h` |
+| `codex` | `primary`, `secondary` |
+| `agy` | `gemini` (GEMINI block: 7d + 5h), `claude` (CLAUDE/GPT block) |
+
+```json
+{
+  "limits": {
+    "kimi": { "7d": false },
+    "opencode": { "5h": false },
+    "agy": { "claude": false }
+  }
+}
+```
+
+Rules: a missing type or window key means **shown** (an old config keeps working unchanged); only `false` hides; unknown types, unknown window keys and non-boolean values are ignored without an error. Settings are per `type`, not per provider `id`; `--json` always contains the full data set regardless of `limits`.
+
 ### Environment Variables
 
 - `LLM_LIMITS_CODEX_BIN`: Explicit path to `codex` binary (CLI).
@@ -299,7 +323,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
-> - **v2.2.0**: New OpenCode Go provider — 5h / 7d / 30d dollar windows (`$12` / `$30` / `$60`) taken straight from `https://opencode.ai/zen/go/v1/usage` with the console API key (`OPENCODE_GO_API_KEY`); percentage, reset countdown and remaining dollars on the card, `rate-limited` shown as exhausted, missing windows shown as `--`. No OAuth tokens involved.
+> - **v2.2.0**: New OpenCode Go provider — 5h / 7d / 30d dollar windows (`$12` / `$30` / `$60`) taken straight from `https://opencode.ai/zen/go/v1/usage` with the console API key (`OPENCODE_GO_API_KEY`); percentage, reset countdown and remaining dollars on the card, `rate-limited` shown as exhausted, missing windows shown as `--`. No OAuth tokens involved. The new `limits` config object selects which periodic windows are drawn for each provider type (card height and CLI rows follow).
 > - **v2.1.7**: AGY (Antigravity CLI) Windows 1.5.4 support — structural validation of the new credential file (`acp_token.json`) alongside legacy paths (read-only; malformed/irrelevant files never launch the CLI, so no OAuth popup risk from a broken file). After an auth failure — including a silent timeout while the CLI waits for browser sign-in — the launcher latches on the credential fingerprint and does not relaunch AGY until the credentials actually change or the user explicitly retries (force refresh / `--no-cache`); no repeated browser windows every minute. A revoked session may still open one browser window on the first launch; the latch suppresses only repeats. Placeholder buckets are now shown honestly (`--` / `нет данных`) instead of a fabricated `0%`; a real `0%` stays `0%`; cached valid values survive failures as `stale` instead of being erased.
 > - **v2.1.5**: OpenRouter quota calculation now uses the active `effective_budget` (instead of mixing all-time usage with periodic limits); fixed legacy `include_byok_in_limit`, non-periodic limit handling (`limit_reset: null`), incomplete budget fallback, and budget reset isolation.
 > - **v2.1.4**: Grayscale anti-aliased text rendering (`TextRenderingHintAntiAliasGridFit`) replacing ClearType to prevent colored halos and dirty pixel artifacts on translucent and light backgrounds.

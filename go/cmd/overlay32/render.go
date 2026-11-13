@@ -436,53 +436,147 @@ func findProviderState(snap *model.Snapshot, id string) *model.ProviderState {
 	return nil
 }
 
+// showWindow — включено ли окно key у провайдера (overlay.config.json -> "limits").
+func showWindow(cfg *config.Config, p config.Provider, key string) bool {
+	return cfg.ShowWindow(p.Type, key)
+}
+
+// openCodeVisibleWindows — окна OpenCode Go в порядке 30д → 7д → 5ч,
+// отфильтрованные настройкой "limits". Уже отфильтрованный список задаёт и
+// высоту карточки, и набор строк.
+func openCodeVisibleWindows(cfg *config.Config, p config.Provider, oc *model.OpenCodeInfo) []model.Window {
+	if oc == nil {
+		return nil
+	}
+	out := []model.Window{}
+	for _, w := range oc.Windows() {
+		if showWindow(cfg, p, w.LimitKey()) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// modelRows — какие бакеты рисовать для kimi (7d/5h) с учётом настроек.
+func kimiRows(cfg *config.Config, p config.Provider, st *model.ProviderState) []model.Bucket {
+	var k7d, k5h model.Bucket
+	if st != nil && st.Kimi != nil {
+		k7d = st.Kimi.Limit7d
+		k5h = st.Kimi.Limit5h
+	}
+	rows := []model.Bucket{}
+	if showWindow(cfg, p, "7d") {
+		rows = append(rows, k7d)
+	}
+	if showWindow(cfg, p, "5h") {
+		rows = append(rows, k5h)
+	}
+	return rows
+}
+
+// codexRows — primary/secondary с учётом настроек и наличия вторичного окна.
+func codexRows(cfg *config.Config, p config.Provider, st *model.ProviderState) []model.Bucket {
+	var prim model.Bucket
+	var sec *model.Bucket
+	if st != nil && st.Codex != nil {
+		prim = st.Codex.Primary
+		sec = st.Codex.Secondary
+	}
+	rows := []model.Bucket{}
+	if showWindow(cfg, p, "primary") {
+		rows = append(rows, prim)
+	}
+	if sec != nil && showWindow(cfg, p, "secondary") {
+		rows = append(rows, *sec)
+	}
+	return rows
+}
+
+// openRouterFreeShown — показывать ли строку free-пула.
+func openRouterFreeShown(cfg *config.Config, p config.Provider, st *model.ProviderState) bool {
+	if !showWindow(cfg, p, "free") {
+		return false
+	}
+	if st != nil && st.OpenRouter != nil {
+		return st.OpenRouter.FreeDailyLimit > 0
+	}
+	return true // по умолчанию free-пул считается доступным, как раньше
+}
+
+// cardHeights — единая точка расчёта высот: одна и та же логика задаёт и
+// высоту окна, и раскладку карточек.
+func cardHeights(cfg *config.Config, p config.Provider, st *model.ProviderState) float32 {
+	switch p.Type {
+	case "kimi":
+		n := float32(len(kimiRows(cfg, p, st)))
+		if n == 0 {
+			return 0
+		}
+		return 34 + 30*n
+	case "openrouter":
+		showLimit := showWindow(cfg, p, "limit")
+		free := openRouterFreeShown(cfg, p, st)
+		if !showLimit && !free {
+			return 0
+		}
+		if showLimit && free {
+			return 91
+		}
+		return 62
+	case "opencode":
+		var oc *model.OpenCodeInfo
+		if st != nil {
+			oc = st.OpenCode
+		}
+		n := float32(len(openCodeVisibleWindows(cfg, p, oc)))
+		if n == 0 {
+			return 0
+		}
+		return 40 + 28*n
+	case "codex":
+		n := float32(len(codexRows(cfg, p, st)))
+		if n == 0 {
+			return 0
+		}
+		return 62 + 32*(n-1)
+	case "agy":
+		gemini := showWindow(cfg, p, "gemini")
+		claude := showWindow(cfg, p, "claude")
+		switch {
+		case gemini && claude:
+			return 186
+		case gemini:
+			return 89
+		case claude:
+			return 97
+		}
+		return 0
+	}
+	return 0
+}
+
 // CalculateWindowHeight вычисляет высоту окна по активным провайдерам из конфига
 func CalculateWindowHeight(snap *model.Snapshot, cfg *config.Config) int32 {
 	if cfg == nil {
 		return 402
 	}
-	providers := cfg.EffectiveProviders()
 	h := int32(6) // root margin top
-	cardCount := 0
+	cards := 0
 
-	for _, p := range providers {
+	for _, p := range cfg.EffectiveProviders() {
 		if !p.Enabled {
 			continue
 		}
-		cardCount++
-		if p.Type == "kimi" {
-			h += 94
-		} else if p.Type == "openrouter" {
-			hasFree := true // по умолчанию есть free
-			st := findProviderState(snap, p.Id)
-			if st != nil && st.OpenRouter != nil {
-				hasFree = (st.OpenRouter.FreeDailyLimit > 0)
-			}
-			if hasFree {
-				h += 91
-			} else {
-				h += 62
-			}
-		} else if p.Type == "agy" {
-			h += 186
-		} else if p.Type == "codex" {
-			hasSec := false
-			st := findProviderState(snap, p.Id)
-			if st != nil && st.Codex != nil && st.Codex.Secondary != nil {
-				hasSec = true
-			}
-			if hasSec {
-				h += 94
-			} else {
-				h += 62
-			}
-		} else if p.Type == "opencode" {
-			h += 124 // три окна: 5ч / 7д / 30д
+		ch := cardHeights(cfg, p, findProviderState(snap, p.Id))
+		if ch <= 0 {
+			continue // все окна этого провайдера скрыты настройками
 		}
+		h += int32(ch)
+		cards++
 	}
 
-	if cardCount > 1 {
-		h += int32(cardCount-1) * 6
+	if cards > 1 {
+		h += int32(cards-1) * 6
 	}
 	h += 13 // root margin bottom
 
@@ -495,6 +589,27 @@ func CalculateWindowHeight(snap *model.Snapshot, cfg *config.Config) int32 {
 	return h
 }
 
+// drawHeaderTitle рисует заголовок карточки и относительное время справа.
+func (r *Renderer) drawHeaderTitle(title string, x, y, w float32, updated, status string) {
+	r.drawString(title, x, y+8, 150, 16, r.fontTitle, colorHeader, false)
+	timeText, timeColor := getRelativeTimeString(updated, status)
+	r.drawString(timeText, x+w-120, y+9, 120, 16, r.fontMeta, timeColor, true)
+}
+
+// drawMeterRow — строка карточки: таймер сброса слева, процент справа, полоса
+// под строкой. Заглушка (нет измеренных данных) даёт «--» без полосы.
+func (r *Renderer) drawMeterRow(x, w, y float32, b model.Bucket) {
+	r.drawString(formatResetTimeLabel(b.ResetIn), x, y, 150, 16, r.fontRow, colorLabel, false)
+	text, ok := agyBucketPctText(b.Placeholder, b.UsedPercent)
+	if !ok {
+		r.drawString(text, x+w-80, y, 80, 16, r.fontRow, colorLabel, true)
+		return
+	}
+	c, f := getPercentColorAndFont(b.UsedPercent, b.UsedFraction, r)
+	r.drawString(text, x+w-80, y, 80, 16, f, c, true)
+	r.drawProgressBar(x, y+17, w, barHeight, b.UsedFraction)
+}
+
 // Render выполняет полную отрисовку карточек в 32-битный буфер
 func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 	// Очищаем прозрачным цветом (alpha=0)
@@ -502,185 +617,102 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 
 	cardX := float32(6)
 	cardW := float32(r.width - 12) // 278
-	contentX := cardX + 10          // 16
-	contentW := cardW - 20          // 258
-	curY := float32(6)              // root margin top
+	contentX := cardX + 10         // 16
+	contentW := cardW - 20         // 258
+	curY := float32(6)             // root margin top
+	drawn := 0
 
-	providers := cfg.EffectiveProviders()
-
-	for i, p := range providers {
+	for _, p := range cfg.EffectiveProviders() {
 		if !p.Enabled {
 			continue
 		}
+		st := findProviderState(snap, p.Id)
+		cardH := cardHeights(cfg, p, st)
+		if cardH <= 0 {
+			continue
+		}
+		if drawn > 0 {
+			curY += 6 // gap between visible cards
+		}
+
+		status := "online"
+		updated := ""
+		if st != nil {
+			status = st.Status
+			updated = st.LastUpdated
+		}
+		title := p.Title
+		if title == "" {
+			title = strings.ToUpper(p.Id)
+		}
+
+		r.drawCardBackground(cardX, curY, cardW, cardH)
 
 		switch p.Type {
 		case "kimi":
-			st := findProviderState(snap, p.Id)
-			status := "online"
-			updated := ""
-			k7dPct, k7dFrac := 0.0, 0.0
-			k7dReset := "--"
-			k5hPct, k5hFrac := 0.0, 0.0
-			k5hReset := "--"
-
-			if st != nil {
-				status = st.Status
-				updated = st.LastUpdated
-				if st.Kimi != nil {
-					k7dPct = st.Kimi.Limit7d.UsedPercent
-					k7dFrac = st.Kimi.Limit7d.UsedFraction
-					k7dReset = st.Kimi.Limit7d.ResetIn
-
-					k5hPct = st.Kimi.Limit5h.UsedPercent
-					k5hFrac = st.Kimi.Limit5h.UsedFraction
-					k5hReset = st.Kimi.Limit5h.ResetIn
-				}
+			r.drawHeaderTitle(title, contentX, curY, contentW, updated, status)
+			for i, b := range kimiRows(cfg, p, st) {
+				r.drawMeterRow(contentX, contentW, curY+28+30*float32(i), b)
 			}
-
-			cardH := float32(94)
-			r.drawCardBackground(cardX, curY, cardW, cardH)
-
-			// Шапка: [Title] ................... [Время/статус]
-			title := p.Title
-			if title == "" {
-				title = "KIMI"
-			}
-			r.drawString(title, contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
-			timeText, timeColor := getRelativeTimeString(updated, status)
-			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
-
-			// Строка 1: Kimi 7d (сверху)
-			r7dY := curY + 28
-			r.drawString(formatResetTimeLabel(k7dReset), contentX, r7dY, 150, 16, r.fontRow, colorLabel, false)
-			pct7dColor, pct7dFont := getPercentColorAndFont(k7dPct, k7dFrac, r)
-			r.drawString(formatPercent(k7dPct), contentX+contentW-80, r7dY, 80, 16, pct7dFont, pct7dColor, true)
-			r.drawProgressBar(contentX, curY+45, contentW, barHeight, k7dFrac)
-
-			// Строка 2: Kimi 5h
-			r5hY := curY + 58
-			r.drawString(formatResetTimeLabel(k5hReset), contentX, r5hY, 150, 16, r.fontRow, colorLabel, false)
-			pct5hColor, pct5hFont := getPercentColorAndFont(k5hPct, k5hFrac, r)
-			r.drawString(formatPercent(k5hPct), contentX+contentW-80, r5hY, 80, 16, pct5hFont, pct5hColor, true)
-			r.drawProgressBar(contentX, curY+75, contentW, barHeight, k5hFrac)
-
-			curY += cardH
 
 		case "openrouter":
-			st := findProviderState(snap, p.Id)
-			status := "online"
-			updated := ""
 			orPct, orFrac := 0.0, 0.0
 			orReset := "--"
-			orBalance := 0.0
-			orLimit := 0.0
-			freeUsed := 0
-			freeLimit := 0
-			hasFree := false
-
-			if st != nil {
-				status = st.Status
-				updated = st.LastUpdated
-				if st.OpenRouter != nil {
-					orPct = st.OpenRouter.UsedPercent
-					orFrac = st.OpenRouter.UsedFraction
-					orReset = st.OpenRouter.ResetIn
-					orBalance = st.OpenRouter.LimitRemaining
-					orLimit = st.OpenRouter.Limit
-					freeUsed = st.OpenRouter.FreeDailyUsed
-					freeLimit = st.OpenRouter.FreeDailyLimit
-					hasFree = (freeLimit > 0)
-				}
+			orLimit, orBalance := 0.0, 0.0
+			freeUsed, freeLimit := 0, 0
+			if st != nil && st.OpenRouter != nil {
+				or := st.OpenRouter
+				orPct = or.UsedPercent
+				orFrac = or.UsedFraction
+				orReset = or.ResetIn
+				orLimit = or.Limit
+				orBalance = or.LimitRemaining
+				freeUsed = or.FreeDailyUsed
+				freeLimit = or.FreeDailyLimit
 			}
 
-			cardH := float32(91)
-			if !hasFree {
-				cardH = float32(62)
-			}
-			r.drawCardBackground(cardX, curY, cardW, cardH)
-
-			// Шапка: [Title] [ост. $X.XX] ................... [Время/статус]
-			title := p.Title
-			if title == "" {
-				title = "OPENROUTER"
-			}
-			r.drawString(title, contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
+			r.drawString(title, contentX, curY+8, 150, 16, r.fontTitle, colorHeader, false)
 			titleWidth := r.measureStringWidth(title, r.fontTitle)
-			if status != "no_key" && orLimit > 0 {
+			showLimit := showWindow(cfg, p, "limit")
+			if showLimit && status != "no_key" && orLimit > 0 {
 				balanceText := fmt.Sprintf("ост. $%.2f", orBalance)
 				r.drawString(balanceText, contentX+titleWidth+8, curY+9, 90, 16, r.fontMeta, colorLabel, false)
 			}
 			timeText, timeColor := getRelativeTimeString(updated, status)
 			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
 
-			// Строка 1: Месячный лимит
-			rMainY := curY + 28
-			r.drawString(formatResetTimeLabel(orReset), contentX, rMainY, 150, 16, r.fontRow, colorLabel, false)
-			pctColor, pctFont := getPercentColorAndFont(orPct, orFrac, r)
-			r.drawString(formatPercent(orPct), contentX+contentW-80, rMainY, 80, 16, pctFont, pctColor, true)
-			r.drawProgressBar(contentX, curY+45, contentW, barHeight, orFrac)
-
-			// Строка 2: Free Daily
-			if hasFree {
-				rFreeY := curY + 55
+			row := float32(0)
+			if showLimit {
+				r.drawMeterRow(contentX, contentW, curY+28, model.Bucket{
+					UsedPercent:  orPct,
+					UsedFraction: orFrac,
+					ResetIn:      orReset,
+				})
+				row++
+			}
+			if openRouterFreeShown(cfg, p, st) {
+				freeY := curY + 28 + 27*row
 				freeFrac := 0.0
 				freePct := 0.0
 				if freeLimit > 0 {
 					freeFrac = math.Max(0.0, math.Min(1.0, float64(freeUsed)/float64(freeLimit)))
 					freePct = math.Round(freeFrac*1000.0) / 10.0
 				}
-				r.drawString(fmt.Sprintf("free: %d/%d", freeUsed, freeLimit), contentX, rFreeY, 150, 16, r.fontRow, colorLabel, false)
+				r.drawString(fmt.Sprintf("free: %d/%d", freeUsed, freeLimit), contentX, freeY, 150, 16, r.fontRow, colorLabel, false)
 				fPctColor, fPctFont := getPercentColorAndFont(freePct, freeFrac, r)
-				r.drawString(formatPercent(freePct), contentX+contentW-80, rFreeY, 80, 16, fPctFont, fPctColor, true)
-				r.drawProgressBar(contentX, curY+72, contentW, barHeight, freeFrac)
+				r.drawString(formatPercent(freePct), contentX+contentW-80, freeY, 80, 16, fPctFont, fPctColor, true)
+				r.drawProgressBar(contentX, freeY+17, contentW, barHeight, freeFrac)
 			}
-
-			curY += cardH
 
 		case "codex":
-			st := findProviderState(snap, p.Id)
-			status := "online"
-			updated := ""
-			planType := ""
-			balance := ""
-			primPct, primFrac := 0.0, 0.0
-			primReset := "--"
-			hasSecondary := false
-			secPct, secFrac := 0.0, 0.0
-			secReset := "--"
-
-			if st != nil {
-				status = st.Status
-				updated = st.LastUpdated
-				if st.Codex != nil {
-					planType = st.Codex.PlanType
-					balance = st.Codex.Balance
-					primPct = st.Codex.Primary.UsedPercent
-					primFrac = st.Codex.Primary.UsedFraction
-					primReset = st.Codex.Primary.ResetIn
-
-					if st.Codex.Secondary != nil {
-						hasSecondary = true
-						secPct = st.Codex.Secondary.UsedPercent
-						secFrac = st.Codex.Secondary.UsedFraction
-						secReset = st.Codex.Secondary.ResetIn
-					}
-				}
+			planType, balance := "", ""
+			if st != nil && st.Codex != nil {
+				planType = st.Codex.PlanType
+				balance = st.Codex.Balance
 			}
 
-			cardH := float32(62)
-			if hasSecondary {
-				cardH = float32(94)
-			}
-			r.drawCardBackground(cardX, curY, cardW, cardH)
-
-			// Шапка: [Title] [planType • balance] ................... [Время/статус]
-			title := p.Title
-			if title == "" {
-				title = "CODEX"
-			}
-			r.drawString(title, contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
+			r.drawString(title, contentX, curY+8, 150, 16, r.fontTitle, colorHeader, false)
 			titleWidth := r.measureStringWidth(title, r.fontTitle)
-
 			metaParts := []string{}
 			if planType != "" {
 				metaParts = append(metaParts, planType)
@@ -692,191 +724,67 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 				metaText := strings.Join(metaParts, " • ")
 				r.drawString(metaText, contentX+titleWidth+8, curY+9, 100, 16, r.fontMeta, colorLabel, false)
 			}
-
 			timeText, timeColor := getRelativeTimeString(updated, status)
 			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
 
-			// Строка 1: Primary
-			rPrimY := curY + 28
-			r.drawString(formatResetTimeLabel(primReset), contentX, rPrimY, 150, 16, r.fontRow, colorLabel, false)
-			pctColor, pctFont := getPercentColorAndFont(primPct, primFrac, r)
-			r.drawString(formatPercent(primPct), contentX+contentW-80, rPrimY, 80, 16, pctFont, pctColor, true)
-			r.drawProgressBar(contentX, curY+45, contentW, barHeight, primFrac)
-
-			// Строка 2: Secondary (если есть)
-			if hasSecondary {
-				rSecY := curY + 58
-				r.drawString(formatResetTimeLabel(secReset), contentX, rSecY, 150, 16, r.fontRow, colorLabel, false)
-				sPctColor, sPctFont := getPercentColorAndFont(secPct, secFrac, r)
-				r.drawString(formatPercent(secPct), contentX+contentW-80, rSecY, 80, 16, sPctFont, sPctColor, true)
-				r.drawProgressBar(contentX, curY+75, contentW, barHeight, secFrac)
+			for i, b := range codexRows(cfg, p, st) {
+				r.drawMeterRow(contentX, contentW, curY+28+32*float32(i), b)
 			}
-
-			curY += cardH
 
 		case "opencode":
-			st := findProviderState(snap, p.Id)
-			status := "online"
-			updated := ""
-			windows := []model.Window{}
+			var oc *model.OpenCodeInfo
 			if st != nil {
-				status = st.Status
-				updated = st.LastUpdated
-				if st.OpenCode != nil {
-					windows = st.OpenCode.Windows()
-				}
+				oc = st.OpenCode
 			}
-
-			cardH := float32(124)
-			r.drawCardBackground(cardX, curY, cardW, cardH)
-
-			title := p.Title
-			if title == "" {
-				title = "OPENCODE GO"
+			r.drawHeaderTitle(title, contentX, curY, contentW, updated, status)
+			for i, w := range openCodeVisibleWindows(cfg, p, oc) {
+				r.drawMeterRow(contentX, contentW, curY+28+28*float32(i), w.Bucket)
 			}
-			r.drawString(title, contentX, curY+8, 150, 16, r.fontTitle, colorHeader, false)
-			timeText, timeColor := getRelativeTimeString(updated, status)
-			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
-
-			for i := 0; i < 3; i++ {
-				rowY := curY + 28 + float32(i)*28
-				pct, frac, reset := 0.0, 0.0, "--"
-				placeholder := true
-				if i < len(windows) {
-					w := windows[i]
-					pct = w.UsedPercent
-					frac = w.UsedFraction
-					reset = w.ResetIn
-					placeholder = w.Placeholder
-				}
-				r.drawString(formatResetTimeLabel(reset), contentX, rowY, 150, 16, r.fontRow, colorLabel, false)
-				pctText, ok := agyBucketPctText(placeholder, pct)
-				if !ok {
-					r.drawString(pctText, contentX+contentW-80, rowY, 80, 16, r.fontRow, colorLabel, true)
-				} else {
-					c, f := getPercentColorAndFont(pct, frac, r)
-					r.drawString(pctText, contentX+contentW-80, rowY, 80, 16, f, c, true)
-					r.drawProgressBar(contentX, rowY+16, contentW, barHeight, frac)
-				}
-			}
-
-			curY += cardH
 
 		case "agy":
-			st := findProviderState(snap, p.Id)
-			status := "online"
-			updated := ""
-			g7dPct, g7dFrac, g7dReset := 0.0, 0.0, "--"
-			g5hPct, g5hFrac, g5hReset := 0.0, 0.0, "--"
-			c7dPct, c7dFrac, c7dReset := 0.0, 0.0, "--"
-			c5hPct, c5hFrac, c5hReset := 0.0, 0.0, "--"
-			g7dPh, g5hPh, c7dPh, c5hPh := true, true, true, true
-
+			agyStatus := status
+			agyUpdated := updated
+			var gWeekly, g5h, cWeekly, c5h model.Bucket
 			if snap != nil {
-				status = snap.AgyStatus
-				if status == "" {
-					status = snap.Status
+				if snap.AgyStatus != "" {
+					agyStatus = snap.AgyStatus
 				}
-				updated = snap.AgyLastUpdated
-				if updated == "" {
-					updated = snap.LastUpdated
+				if snap.AgyLastUpdated != "" {
+					agyUpdated = snap.AgyLastUpdated
 				}
-				g7dPct = snap.GeminiWeekly.UsedPercent
-				g7dFrac = snap.GeminiWeekly.UsedFraction
-				g7dReset = snap.GeminiWeekly.ResetIn
-				g7dPh = snap.GeminiWeekly.Placeholder
-
-				g5hPct = snap.Gemini5h.UsedPercent
-				g5hFrac = snap.Gemini5h.UsedFraction
-				g5hReset = snap.Gemini5h.ResetIn
-				g5hPh = snap.Gemini5h.Placeholder
-
-				c7dPct = snap.ClaudeWeekly.UsedPercent
-				c7dFrac = snap.ClaudeWeekly.UsedFraction
-				c7dReset = snap.ClaudeWeekly.ResetIn
-				c7dPh = snap.ClaudeWeekly.Placeholder
-
-				c5hPct = snap.Claude5h.UsedPercent
-				c5hFrac = snap.Claude5h.UsedFraction
-				c5hReset = snap.Claude5h.ResetIn
-				c5hPh = snap.Claude5h.Placeholder
-			} else if st != nil {
-				status = st.Status
-				updated = st.LastUpdated
+				gWeekly, g5h = snap.GeminiWeekly, snap.Gemini5h
+				cWeekly, c5h = snap.ClaudeWeekly, snap.Claude5h
 			}
+			showGemini := showWindow(cfg, p, "gemini")
+			showClaude := showWindow(cfg, p, "claude")
+			sectionY := curY
 
-			cardH := float32(186)
-			r.drawCardBackground(cardX, curY, cardW, cardH)
-
-			// Шапка GEMINI: [GEMINI] ................... [Время/статус]
-			r.drawString("GEMINI", contentX, curY+8, 120, 16, r.fontTitle, colorHeader, false)
-			timeText, timeColor := getRelativeTimeString(updated, status)
-			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
-
-			// Gemini 7d (Weekly first)
-			g7dY := curY + 28
-			r.drawString(formatResetTimeLabel(g7dReset), contentX, g7dY, 150, 16, r.fontRow, colorLabel, false)
-			g7dText, g7dOk := agyBucketPctText(g7dPh, g7dPct)
-			if !g7dOk {
-				r.drawString(g7dText, contentX+contentW-80, g7dY, 80, 16, r.fontRow, colorLabel, true)
-			} else {
-				g7dColor, g7dFont := getPercentColorAndFont(g7dPct, g7dFrac, r)
-				r.drawString(g7dText, contentX+contentW-80, g7dY, 80, 16, g7dFont, g7dColor, true)
-				r.drawProgressBar(contentX, curY+45, contentW, barHeight, g7dFrac)
+			if showGemini {
+				r.drawHeaderTitle("GEMINI", contentX, sectionY, contentW, agyUpdated, agyStatus)
+				r.drawMeterRow(contentX, contentW, sectionY+28, gWeekly)
+				r.drawMeterRow(contentX, contentW, sectionY+58, g5h)
+				sectionY += 89
+				if showClaude {
+					var divPen uintptr
+					procGdipCreatePen1.Call(uintptr(colorDivider), fbits(0.8), UnitPixel, uintptr(unsafe.Pointer(&divPen)))
+					procGdipDrawLine.Call(r.graphics, divPen, fbits(contentX), fbits(sectionY), fbits(contentX+contentW), fbits(sectionY))
+					procGdipDeletePen.Call(divPen)
+					sectionY += 8
+				}
 			}
-
-			// Gemini 5h
-			g5hY := curY + 58
-			r.drawString(formatResetTimeLabel(g5hReset), contentX, g5hY, 150, 16, r.fontRow, colorLabel, false)
-			g5hText, g5hOk := agyBucketPctText(g5hPh, g5hPct)
-			if !g5hOk {
-				r.drawString(g5hText, contentX+contentW-80, g5hY, 80, 16, r.fontRow, colorLabel, true)
-			} else {
-				g5hColor, g5hFont := getPercentColorAndFont(g5hPct, g5hFrac, r)
-				r.drawString(g5hText, contentX+contentW-80, g5hY, 80, 16, g5hFont, g5hColor, true)
-				r.drawProgressBar(contentX, curY+75, contentW, barHeight, g5hFrac)
+			if showClaude {
+				if showGemini {
+					r.drawString("CLAUDE/GPT", contentX, sectionY+8, 120, 16, r.fontTitle, colorHeader, false)
+				} else {
+					r.drawHeaderTitle("CLAUDE/GPT", contentX, sectionY, contentW, agyUpdated, agyStatus)
+				}
+				r.drawMeterRow(contentX, contentW, sectionY+28, cWeekly)
+				r.drawMeterRow(contentX, contentW, sectionY+58, c5h)
 			}
-
-			// Divider: Color.FromArgb(0x18, 0, 0, 0), Height 0.8
-			divY := curY + 89
-			var divPen uintptr
-			procGdipCreatePen1.Call(uintptr(colorDivider), fbits(0.8), UnitPixel, uintptr(unsafe.Pointer(&divPen)))
-			procGdipDrawLine.Call(r.graphics, divPen, fbits(contentX), fbits(divY), fbits(contentX+contentW), fbits(divY))
-			procGdipDeletePen.Call(divPen)
-
-			// Шапка CLAUDE/GPT (без времени справа)
-			r.drawString("CLAUDE/GPT", contentX, curY+97, 120, 16, r.fontTitle, colorHeader, false)
-
-			// Claude 7d (Weekly first)
-			c7dY := curY + 117
-			r.drawString(formatResetTimeLabel(c7dReset), contentX, c7dY, 150, 16, r.fontRow, colorLabel, false)
-			c7dText, c7dOk := agyBucketPctText(c7dPh, c7dPct)
-			if !c7dOk {
-				r.drawString(c7dText, contentX+contentW-80, c7dY, 80, 16, r.fontRow, colorLabel, true)
-			} else {
-				c7dColor, c7dFont := getPercentColorAndFont(c7dPct, c7dFrac, r)
-				r.drawString(c7dText, contentX+contentW-80, c7dY, 80, 16, c7dFont, c7dColor, true)
-				r.drawProgressBar(contentX, curY+134, contentW, barHeight, c7dFrac)
-			}
-
-			// Claude 5h
-			c5hY := curY + 147
-			r.drawString(formatResetTimeLabel(c5hReset), contentX, c5hY, 150, 16, r.fontRow, colorLabel, false)
-			c5hText, c5hOk := agyBucketPctText(c5hPh, c5hPct)
-			if !c5hOk {
-				r.drawString(c5hText, contentX+contentW-80, c5hY, 80, 16, r.fontRow, colorLabel, true)
-			} else {
-				c5hColor, c5hFont := getPercentColorAndFont(c5hPct, c5hFrac, r)
-				r.drawString(c5hText, contentX+contentW-80, c5hY, 80, 16, c5hFont, c5hColor, true)
-				r.drawProgressBar(contentX, curY+164, contentW, barHeight, c5hFrac)
-			}
-
-			curY += cardH
 		}
 
-		if i < len(providers)-1 {
-			curY += 6 // gap between cards
-		}
+		curY += cardH
+		drawn++
 	}
 
 	return nil
