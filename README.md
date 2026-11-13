@@ -53,8 +53,7 @@ The overlay presents information in logical vertical cards from top to bottom:
    - Source: `GET https://openrouter.ai/api/v1/key` (HTTP Bearer auth).
 
 3. **OPENCODE GO** (subscription card; without `OPENCODE_GO_API_KEY` it shows «нет ключа» and makes no HTTP request):
-   - Three dollar-denominated windows from the OpenCode Go plan ($12 / 5h, $30 / week, $60 / month):
-     **5h**, **7d**, **30d** — percentage consumed, time until reset, and the remaining amount in dollars.
+   - Three dollar-denominated windows of the OpenCode Go plan ($12 / 5h, $30 / week, $60 / month), listed from the longest to the shortest — **30d**, **7d**, **5h** — each with the reset countdown and percentage consumed, in the same style as the KIMI card (the CLI additionally prints the remaining dollars per window).
    - Source: `GET https://opencode.ai/zen/go/v1/usage` (Bearer console API key; response `{usage:{rolling,weekly,monthly}}` with `status`, `percent`, `resetsAt`). No OAuth token is touched, the request does not consume quota.
    - An exhausted window (`status: rate-limited`) is shown as `critical` / `100%`; a window missing from the response is rendered as `--` instead of a fabricated `0%`.
 

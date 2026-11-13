@@ -335,19 +335,6 @@ func formatResetTimeLabel(resetIn string) string {
 	return strings.TrimSpace(ru)
 }
 
-// openCodeRowLabel — подпись строки OpenCode Go: имя окна + таймер сброса.
-// «через» отделяет окно от обратного отсчёта: «7д · через 2д 12ч» не читается
-// как два подряд идущих срока, в отличие от «7д · 2д 12ч».
-func openCodeRowLabel(name, resetIn string) string {
-	if resetIn == "" || resetIn == "--" || resetIn == "N/A" {
-		return name + " · --"
-	}
-	if resetIn == "ready" {
-		return name + " · готов"
-	}
-	return name + " · через " + formatResetTimeLabel(resetIn)
-}
-
 // getRelativeTimeString возвращает человекочитаемую строку времени обновления и цвет статуса
 func getRelativeTimeString(updatedIso, status string) (string, uint32) {
 	if status == "no_key" {
@@ -736,7 +723,7 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 				status = st.Status
 				updated = st.LastUpdated
 				if st.OpenCode != nil {
-					windows = []model.Window{st.OpenCode.Rolling, st.OpenCode.Weekly, st.OpenCode.Monthly}
+					windows = st.OpenCode.Windows()
 				}
 			}
 
@@ -753,18 +740,16 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 
 			for i := 0; i < 3; i++ {
 				rowY := curY + 28 + float32(i)*28
-				name := "--"
 				pct, frac, reset := 0.0, 0.0, "--"
 				placeholder := true
 				if i < len(windows) {
 					w := windows[i]
-					name = w.Name
 					pct = w.UsedPercent
 					frac = w.UsedFraction
 					reset = w.ResetIn
 					placeholder = w.Placeholder
 				}
-				r.drawString(openCodeRowLabel(name, reset), contentX, rowY, 150, 16, r.fontRow, colorLabel, false)
+				r.drawString(formatResetTimeLabel(reset), contentX, rowY, 150, 16, r.fontRow, colorLabel, false)
 				pctText, ok := agyBucketPctText(placeholder, pct)
 				if !ok {
 					r.drawString(pctText, contentX+contentW-80, rowY, 80, 16, r.fontRow, colorLabel, true)

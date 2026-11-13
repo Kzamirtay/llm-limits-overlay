@@ -323,9 +323,9 @@ func render(opt *options, snap *model.Snapshot) {
 				continue
 			}
 			renderHeader(p.Title, st.Status, st.LastUpdated)
-			renderWindow("  5ч", st.OpenCode.Rolling)
-			renderWindow("  7д", st.OpenCode.Weekly)
-			renderWindow("  30д", st.OpenCode.Monthly)
+			for _, w := range st.OpenCode.Windows() {
+				renderWindow("  "+w.Name, w)
+			}
 		case "codex":
 			if st.Codex == nil {
 				continue

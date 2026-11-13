@@ -66,6 +66,12 @@ type OpenCodeInfo struct {
 	Monthly     Window
 }
 
+// Windows — окна в порядке отображения (как у остальных карточек:
+// сначала длинное окно, затем короткие): 30д, 7д, 5ч.
+func (o *OpenCodeInfo) Windows() []Window {
+	return []Window{o.Monthly, o.Weekly, o.Rolling}
+}
+
 // ProviderState — состояние одного провайдера (включая кастомные id).
 type ProviderState struct {
 	Id          string
