@@ -11,6 +11,7 @@ import (
 
 	"llmlimits/internal/config"
 	"llmlimits/internal/fetchers"
+	"llmlimits/internal/layout"
 	"llmlimits/internal/model"
 )
 
@@ -289,6 +290,7 @@ func render(opt *options, snap *model.Snapshot) {
 		fmt.Println(string(out))
 		return
 	}
+	cfg := activeCfg
 	for _, p := range providers {
 		if !p.Enabled {
 			continue
@@ -302,27 +304,26 @@ func render(opt *options, snap *model.Snapshot) {
 		}
 		switch p.Type {
 		case "agy":
-			gemini := showWin(p, "gemini")
-			claude := showWin(p, "claude")
-			if !gemini && !claude {
+			geminiOn, claudeOn := layout.AgyShowGroups(cfg, p)
+			gRows := layout.AgyRowList(geminiOn, snap.GeminiWeekly, snap.Gemini5h)
+			cRows := layout.AgyRowList(claudeOn, snap.ClaudeWeekly, snap.Claude5h)
+			if len(gRows) == 0 && len(cRows) == 0 {
 				continue
 			}
 			renderHeader(p.Title, st.Status, st.LastUpdated)
-			if gemini {
-				renderBucket("  gemini 7d", snap.GeminiWeekly)
-				renderBucket("  gemini 5h", snap.Gemini5h)
+			for _, row := range gRows {
+				renderBucket("  gemini "+row.Key, row.Bucket)
 			}
-			if claude {
-				renderBucket("  claude 7d", snap.ClaudeWeekly)
-				renderBucket("  claude 5h", snap.Claude5h)
+			for _, row := range cRows {
+				renderBucket("  claude "+row.Key, row.Bucket)
 			}
 		case "openrouter":
 			if st.OpenRouter == nil {
 				continue
 			}
 			or := st.OpenRouter
-			showLimit := showWin(p, "limit")
-			showFree := showWin(p, "free") && or.FreeDailyLimit > 0
+			showLimit := layout.OpenRouterShowLimit(cfg, p)
+			showFree := layout.OpenRouterShowFree(cfg, p, st)
 			if !showLimit && !showFree {
 				continue
 			}
@@ -343,15 +344,7 @@ func render(opt *options, snap *model.Snapshot) {
 					fmt.Sprintf("%.2f", or.LimitRemaining))
 			}
 		case "opencode":
-			if st.OpenCode == nil {
-				continue
-			}
-			windows := []model.Window{}
-			for _, w := range st.OpenCode.Windows() {
-				if showWin(p, w.LimitKey()) {
-					windows = append(windows, w)
-				}
-			}
+			windows := layout.OpenCodeWindows(cfg, p, st)
 			if len(windows) == 0 {
 				continue
 			}
@@ -360,53 +353,40 @@ func render(opt *options, snap *model.Snapshot) {
 				renderWindow("  "+w.Name, w)
 			}
 		case "codex":
-			if st.Codex == nil {
-				continue
-			}
-			rows := [][2]interface{}{}
-			if showWin(p, "primary") {
-				label := st.Codex.PrimaryName
-				if label == "" {
-					label = "30д"
-				}
-				rows = append(rows, [2]interface{}{label, st.Codex.Primary})
-			}
-			if st.Codex.Secondary != nil && showWin(p, "secondary") {
-				secLabel := st.Codex.SecondaryName
-				if secLabel == "" {
-					secLabel = "secondary"
-				}
-				rows = append(rows, [2]interface{}{secLabel, *st.Codex.Secondary})
-			}
+			rows := layout.CodexRowList(cfg, p, st)
 			if len(rows) == 0 {
 				continue
 			}
 			renderHeader(p.Title, st.Status, st.LastUpdated)
-			for _, r := range rows {
-				renderBucket("  "+r[0].(string), r[1].(model.Bucket))
+			for _, row := range rows {
+				label := "secondary"
+				if row.Key == "primary" {
+					label = "30д"
+				}
+				if st.Codex != nil {
+					if row.Key == "primary" && st.Codex.PrimaryName != "" {
+						label = st.Codex.PrimaryName
+					}
+					if row.Key == "secondary" {
+						label = "secondary"
+						if st.Codex.SecondaryName != "" {
+							label = st.Codex.SecondaryName
+						}
+					}
+				}
+				renderBucket("  "+label, row.Bucket)
 			}
 		default: // kimi
-			if st.Kimi == nil {
-				continue
-			}
-			show7d, show5h := showWin(p, "7d"), showWin(p, "5h")
-			if !show7d && !show5h {
+			rows := layout.KimiRowList(cfg, p, st)
+			if len(rows) == 0 {
 				continue
 			}
 			renderHeader(p.Title, st.Status, st.LastUpdated)
-			if show7d {
-				renderBucket("  7d", st.Kimi.Limit7d)
-			}
-			if show5h {
-				renderBucket("  5h", st.Kimi.Limit5h)
+			for _, row := range rows {
+				renderBucket("  "+row.Key, row.Bucket)
 			}
 		}
 	}
-}
-
-// showWin — включено ли окно key для провайдера (overlay.config.json -> "limits").
-func showWin(p config.Provider, key string) bool {
-	return activeCfg.ShowWindow(p.Type, key)
 }
 
 func renderHeader(name, status, lastUpdated string) {

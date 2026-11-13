@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"llmlimits/internal/config"
+	"llmlimits/internal/layout"
 	"llmlimits/internal/model"
 
 	"golang.org/x/sys/windows"
@@ -436,125 +437,6 @@ func findProviderState(snap *model.Snapshot, id string) *model.ProviderState {
 	return nil
 }
 
-// showWindow — включено ли окно key у провайдера (overlay.config.json -> "limits").
-func showWindow(cfg *config.Config, p config.Provider, key string) bool {
-	return cfg.ShowWindow(p.Type, key)
-}
-
-// openCodeVisibleWindows — окна OpenCode Go в порядке 30д → 7д → 5ч,
-// отфильтрованные настройкой "limits". Уже отфильтрованный список задаёт и
-// высоту карточки, и набор строк.
-func openCodeVisibleWindows(cfg *config.Config, p config.Provider, oc *model.OpenCodeInfo) []model.Window {
-	if oc == nil {
-		return nil
-	}
-	out := []model.Window{}
-	for _, w := range oc.Windows() {
-		if showWindow(cfg, p, w.LimitKey()) {
-			out = append(out, w)
-		}
-	}
-	return out
-}
-
-// modelRows — какие бакеты рисовать для kimi (7d/5h) с учётом настроек.
-func kimiRows(cfg *config.Config, p config.Provider, st *model.ProviderState) []model.Bucket {
-	var k7d, k5h model.Bucket
-	if st != nil && st.Kimi != nil {
-		k7d = st.Kimi.Limit7d
-		k5h = st.Kimi.Limit5h
-	}
-	rows := []model.Bucket{}
-	if showWindow(cfg, p, "7d") {
-		rows = append(rows, k7d)
-	}
-	if showWindow(cfg, p, "5h") {
-		rows = append(rows, k5h)
-	}
-	return rows
-}
-
-// codexRows — primary/secondary с учётом настроек и наличия вторичного окна.
-func codexRows(cfg *config.Config, p config.Provider, st *model.ProviderState) []model.Bucket {
-	var prim model.Bucket
-	var sec *model.Bucket
-	if st != nil && st.Codex != nil {
-		prim = st.Codex.Primary
-		sec = st.Codex.Secondary
-	}
-	rows := []model.Bucket{}
-	if showWindow(cfg, p, "primary") {
-		rows = append(rows, prim)
-	}
-	if sec != nil && showWindow(cfg, p, "secondary") {
-		rows = append(rows, *sec)
-	}
-	return rows
-}
-
-// openRouterFreeShown — показывать ли строку free-пула.
-func openRouterFreeShown(cfg *config.Config, p config.Provider, st *model.ProviderState) bool {
-	if !showWindow(cfg, p, "free") {
-		return false
-	}
-	if st != nil && st.OpenRouter != nil {
-		return st.OpenRouter.FreeDailyLimit > 0
-	}
-	return true // по умолчанию free-пул считается доступным, как раньше
-}
-
-// cardHeights — единая точка расчёта высот: одна и та же логика задаёт и
-// высоту окна, и раскладку карточек.
-func cardHeights(cfg *config.Config, p config.Provider, st *model.ProviderState) float32 {
-	switch p.Type {
-	case "kimi":
-		n := float32(len(kimiRows(cfg, p, st)))
-		if n == 0 {
-			return 0
-		}
-		return 34 + 30*n
-	case "openrouter":
-		showLimit := showWindow(cfg, p, "limit")
-		free := openRouterFreeShown(cfg, p, st)
-		if !showLimit && !free {
-			return 0
-		}
-		if showLimit && free {
-			return 91
-		}
-		return 62
-	case "opencode":
-		var oc *model.OpenCodeInfo
-		if st != nil {
-			oc = st.OpenCode
-		}
-		n := float32(len(openCodeVisibleWindows(cfg, p, oc)))
-		if n == 0 {
-			return 0
-		}
-		return 40 + 28*n
-	case "codex":
-		n := float32(len(codexRows(cfg, p, st)))
-		if n == 0 {
-			return 0
-		}
-		return 62 + 32*(n-1)
-	case "agy":
-		gemini := showWindow(cfg, p, "gemini")
-		claude := showWindow(cfg, p, "claude")
-		switch {
-		case gemini && claude:
-			return 186
-		case gemini:
-			return 89
-		case claude:
-			return 97
-		}
-		return 0
-	}
-	return 0
-}
-
 // CalculateWindowHeight вычисляет высоту окна по активным провайдерам из конфига
 func CalculateWindowHeight(snap *model.Snapshot, cfg *config.Config) int32 {
 	if cfg == nil {
@@ -567,9 +449,9 @@ func CalculateWindowHeight(snap *model.Snapshot, cfg *config.Config) int32 {
 		if !p.Enabled {
 			continue
 		}
-		ch := cardHeights(cfg, p, findProviderState(snap, p.Id))
+		ch := layout.CardHeight(cfg, p, findProviderState(snap, p.Id), snap)
 		if ch <= 0 {
-			continue // все окна этого провайдера скрыты настройками
+			continue // все окна скрыты настройками или схлопнуты исчерпанием
 		}
 		h += int32(ch)
 		cards++
@@ -627,12 +509,12 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 			continue
 		}
 		st := findProviderState(snap, p.Id)
-		cardH := cardHeights(cfg, p, st)
+		cardH := layout.CardHeight(cfg, p, st, snap)
 		if cardH <= 0 {
 			continue
 		}
 		if drawn > 0 {
-			curY += 6 // gap between visible cards
+			curY += 6 // gap между видимыми карточками
 		}
 
 		status := "online"
@@ -651,7 +533,7 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 		switch p.Type {
 		case "kimi":
 			r.drawHeaderTitle(title, contentX, curY, contentW, updated, status)
-			for i, b := range kimiRows(cfg, p, st) {
+			for i, b := range layout.KimiRows(cfg, p, st) {
 				r.drawMeterRow(contentX, contentW, curY+28+30*float32(i), b)
 			}
 
@@ -673,7 +555,7 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 
 			r.drawString(title, contentX, curY+8, 150, 16, r.fontTitle, colorHeader, false)
 			titleWidth := r.measureStringWidth(title, r.fontTitle)
-			showLimit := showWindow(cfg, p, "limit")
+			showLimit := layout.OpenRouterShowLimit(cfg, p)
 			if showLimit && status != "no_key" && orLimit > 0 {
 				balanceText := fmt.Sprintf("ост. $%.2f", orBalance)
 				r.drawString(balanceText, contentX+titleWidth+8, curY+9, 90, 16, r.fontMeta, colorLabel, false)
@@ -690,7 +572,7 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 				})
 				row++
 			}
-			if openRouterFreeShown(cfg, p, st) {
+			if layout.OpenRouterShowFree(cfg, p, st) {
 				freeY := curY + 28 + 27*row
 				freeFrac := 0.0
 				freePct := 0.0
@@ -727,17 +609,13 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 			timeText, timeColor := getRelativeTimeString(updated, status)
 			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
 
-			for i, b := range codexRows(cfg, p, st) {
+			for i, b := range layout.CodexRows(cfg, p, st) {
 				r.drawMeterRow(contentX, contentW, curY+28+32*float32(i), b)
 			}
 
 		case "opencode":
-			var oc *model.OpenCodeInfo
-			if st != nil {
-				oc = st.OpenCode
-			}
 			r.drawHeaderTitle(title, contentX, curY, contentW, updated, status)
-			for i, w := range openCodeVisibleWindows(cfg, p, oc) {
+			for i, w := range layout.OpenCodeWindows(cfg, p, st) {
 				r.drawMeterRow(contentX, contentW, curY+28+28*float32(i), w.Bucket)
 			}
 
@@ -755,31 +633,34 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 				gWeekly, g5h = snap.GeminiWeekly, snap.Gemini5h
 				cWeekly, c5h = snap.ClaudeWeekly, snap.Claude5h
 			}
-			showGemini := showWindow(cfg, p, "gemini")
-			showClaude := showWindow(cfg, p, "claude")
+			geminiOn, claudeOn := layout.AgyShowGroups(cfg, p)
+			gRows := layout.AgyRows(geminiOn, gWeekly, g5h)
+			cRows := layout.AgyRows(claudeOn, cWeekly, c5h)
 			sectionY := curY
+			groupsDrawn := 0
 
-			if showGemini {
+			if len(gRows) > 0 {
 				r.drawHeaderTitle("GEMINI", contentX, sectionY, contentW, agyUpdated, agyStatus)
-				r.drawMeterRow(contentX, contentW, sectionY+28, gWeekly)
-				r.drawMeterRow(contentX, contentW, sectionY+58, g5h)
-				sectionY += 89
-				if showClaude {
+				for i, b := range gRows {
+					r.drawMeterRow(contentX, contentW, sectionY+28+30*float32(i), b)
+				}
+				sectionY += layout.AgyGroupHeight(len(gRows))
+				groupsDrawn++
+			}
+			if len(cRows) > 0 {
+				if groupsDrawn > 0 {
 					var divPen uintptr
 					procGdipCreatePen1.Call(uintptr(colorDivider), fbits(0.8), UnitPixel, uintptr(unsafe.Pointer(&divPen)))
 					procGdipDrawLine.Call(r.graphics, divPen, fbits(contentX), fbits(sectionY), fbits(contentX+contentW), fbits(sectionY))
 					procGdipDeletePen.Call(divPen)
 					sectionY += 8
-				}
-			}
-			if showClaude {
-				if showGemini {
 					r.drawString("CLAUDE/GPT", contentX, sectionY+8, 120, 16, r.fontTitle, colorHeader, false)
 				} else {
 					r.drawHeaderTitle("CLAUDE/GPT", contentX, sectionY, contentW, agyUpdated, agyStatus)
 				}
-				r.drawMeterRow(contentX, contentW, sectionY+28, cWeekly)
-				r.drawMeterRow(contentX, contentW, sectionY+58, c5h)
+				for i, b := range cRows {
+					r.drawMeterRow(contentX, contentW, sectionY+28+30*float32(i), b)
+				}
 			}
 		}
 
