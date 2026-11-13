@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 $env:SEE_MASK_NOZONECHECKS = "1"
 
-$Version = "2.1.7"
+$Version = "2.2.0"
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $setupExe = Join-Path $repoRoot "dist\LlmLimitsOverlay-Setup-$Version.exe"
 $envSource = Join-Path $repoRoot ".env"

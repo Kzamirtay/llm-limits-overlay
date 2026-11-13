@@ -47,16 +47,36 @@ type CodexInfo struct {
 	SecondaryMin  int
 }
 
+// Window — именованное окно лимита с денежными границами (OpenCode Go).
+type Window struct {
+	Name         string
+	Bucket
+	LimitUSD     float64
+	RemainingUSD float64
+	Limited      bool
+}
+
+// OpenCodeInfo — OpenCode Go: три долларовых окна (5ч / 7д / 30д).
+type OpenCodeInfo struct {
+	Status      string
+	LastUpdated string
+	Plan        string
+	Rolling     Window
+	Weekly      Window
+	Monthly     Window
+}
+
 // ProviderState — состояние одного провайдера (включая кастомные id).
 type ProviderState struct {
 	Id          string
 	Title       string
-	Kind        string // kimi | openrouter | agy | codex
+	Kind        string // kimi | openrouter | agy | codex | opencode
 	Status      string
 	LastUpdated string
 	Kimi        *KimiInfo
 	OpenRouter  *OpenRouterInfo
 	Codex       *CodexInfo
+	OpenCode    *OpenCodeInfo
 }
 
 // Snapshot — результат одного цикла фетча.

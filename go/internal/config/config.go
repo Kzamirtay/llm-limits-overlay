@@ -62,6 +62,7 @@ func Defaults() []Provider {
 	return []Provider{
 		{Id: "kimi", Type: "kimi", Title: "KIMI", BaseUrl: "https://api.kimi.com/coding/v1", ApiKeyEnv: "KIMI_API_KEY", Enabled: true},
 		{Id: "openrouter", Type: "openrouter", Title: "OPENROUTER", BaseUrl: "https://openrouter.ai/api/v1", ApiKeyEnv: "OPENROUTER_API_KEY", Enabled: true},
+		{Id: "opencode", Type: "opencode", Title: "OPENCODE GO", BaseUrl: "https://opencode.ai/zen/go/v1", ApiKeyEnv: "OPENCODE_GO_API_KEY", Enabled: true},
 		{Id: "agy", Type: "agy", Title: "GEMINI + CLAUDE/GPT", Enabled: true},
 	}
 }
@@ -158,7 +159,7 @@ func parseProviders(list []interface{}) []Provider {
 			p.Type = "kimi"
 		}
 		switch p.Type {
-		case "kimi", "openrouter", "agy", "codex":
+		case "kimi", "openrouter", "agy", "codex", "opencode":
 		default:
 			Log(fmt.Sprintf("[config] providers: неизвестный type '%s' у записи '%s' — запись пропущена (новый провайдер = новый тип в коде)", p.Type, p.Id))
 			continue

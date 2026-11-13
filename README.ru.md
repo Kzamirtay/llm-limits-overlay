@@ -33,14 +33,14 @@
   - Индивидуальные таймауты: HTTP 3.5 с для OpenRouter / Kimi; 8 с для `agy.exe`.
   - Кэширование квот Antigravity (300 с в `%TEMP%\llm_limits_agy_usage_cache.json`) сводит вызовы `agy.exe` к минимуму, сохраняя актуальность OpenRouter и Kimi на каждом 60-секундном тике.
 - **Per-card время обновления (v1.2.0+)**:
-  - Каждая из трёх карточек (KIMI / OPENROUTER / GEMINI+CLAUDE-GPT) показывает собственный возраст данных (`только что`, `N мин`) в правом нижнем углу.
+  - Каждая карточка (KIMI / OPENROUTER / OPENCODE GO / GEMINI+CLAUDE-GPT) показывает собственный возраст данных (`только что`, `N мин`) в правом нижнем углу.
   - Провайдеры обновляются независимо, поэтому возраст на карточках может различаться; упавший провайдер сохраняет время **последнего успешного фетча** и получает суффикс ` (stale)` только на своей карточке.
 
 ---
 
 ## Что отображает оверлей
 
-Оверлей скомпонован сверху вниз тремя логическими блоками:
+Оверлей скомпонован сверху вниз логическими блоками:
 
 1. **KIMI** (верхняя карточка):
    - **Недельный лимит (7d)**: таймер до сброса квоты (например, `3д 8ч`), процент расхода (`100%`) и полоса прогресса.
@@ -52,7 +52,12 @@
    - **Служебная строка**: количество использованных бесплатных запросов (`free: 0/1000`) и остаток кредитного баланса (`ост. $9.63`).
    - Источник: `GET https://openrouter.ai/api/v1/key` (HTTP Bearer-авторизация).
 
-3. **GEMINI + CLAUDE / GPT** (нижняя объединенная карточка):
+3. **OPENCODE GO** (карточка подписки; без `OPENCODE_GO_API_KEY` показывает «нет ключа» и не выполняет HTTP-запрос):
+   - Три долларовых окна плана OpenCode Go (`$12` / 5ч, `$30` / неделя, `$60` / месяц): **5ч**, **7д**, **30д** — процент расхода, таймер до сброса и остаток в долларах.
+   - Источник: `GET https://opencode.ai/zen/go/v1/usage` (Bearer-ключ консоли; ответ `{usage:{rolling,weekly,monthly}}` с `status`, `percent`, `resetsAt`). OAuth-токены не трогаются, запрос квоту не расходует.
+   - Исчерпанное окно (`status: rate-limited`) показывается как `critical` / `100%`; окно, которого нет в ответе, рисуется как `--`, а не выдуманный `0%`.
+
+4. **GEMINI + CLAUDE / GPT** (нижняя объединенная карточка):
    - Модели объединены в одну карточку с деликатным тонким разделителем:
      - **GEMINI**: недельное окно (7d, сверху) и 5-часовое окно (5h, снизу).
      - **CLAUDE / GPT**: недельное окно (7d, сверху) и 5-часовое окно (5h, снизу).
@@ -199,13 +204,14 @@
 
 ### Провайдеры в конфиге
 
-По умолчанию оверлей показывает встроенную тройку: **KIMI**, **OPENROUTER**, **GEMINI + CLAUDE/GPT**. Список можно переопределить массивом `providers` в `overlay.config.json` — карточки строятся динамически и в GUI, и в CLI:
+По умолчанию оверлей показывает встроенную четвёрку: **KIMI**, **OPENROUTER**, **OPENCODE GO**, **GEMINI + CLAUDE/GPT**. Список можно переопределить массивом `providers` в `overlay.config.json` — карточки строятся динамически и в GUI, и в CLI:
 
 ```json
 {
   "providers": [
     { "id": "kimi", "type": "kimi", "title": "KIMI", "apiKeyEnv": "KIMI_API_KEY" },
     { "id": "openrouter", "type": "openrouter", "title": "OPENROUTER", "apiKeyEnv": "OPENROUTER_API_KEY" },
+    { "id": "opencode", "type": "opencode", "title": "OPENCODE GO", "apiKeyEnv": "OPENCODE_GO_API_KEY" },
     { "id": "codex", "type": "codex", "title": "CODEX" },
     { "id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT" }
   ]
@@ -213,14 +219,15 @@
 ```
 
 - `id`: уникальный ключ — блок провайдера в `limits.json` лежит как `data.<id>` (обратная совместимость: `kimi`/`openrouter` сохраняют прежний формат).
-- `type`: `kimi` (окна 5ч/7д из `{baseUrl или https://api.kimi.com/coding/v1}/usages`) | `openrouter` (кредиты + free-пул из `{baseUrl или https://openrouter.ai/api/v1}/key`) | `agy` (нативный `agy.exe`) | `codex` (лимиты ChatGPT Codex CLI через локальный `codex app-server`). **Неизвестный type пропускается с предупреждением в логе — новый провайдер = новый тип в коде.**
+- `type`: `kimi` (окна 5ч/7д из `{baseUrl или https://api.kimi.com/coding/v1}/usages`) | `openrouter` (кредиты + free-пул из `{baseUrl или https://openrouter.ai/api/v1}/key`) | `agy` (нативный `agy.exe`) | `codex` (лимиты ChatGPT Codex CLI через локальный `codex app-server`) | `opencode` (окна плана OpenCode Go 5ч/7д/30д из `{baseUrl или https://opencode.ai/zen/go/v1}/usage`). **Неизвестный type пропускается с предупреждением в логе — новый провайдер = новый тип в коде.**
 - `title`: заголовок карточки.
 - `apiKeyEnv`: имя переменной в `.env`/окружении с ключом. Для `codex` и `agy` ключ не требуется. Несколько записей одного типа = несколько карточек со своими ключами (`apiKey` инлайн тоже допустим, но лучше `apiKeyEnv` — инлайн-ключ окажется в файле конфигурации).
 - `enabled: false` — карточка скрыта.
 - `baseUrl` *(опционально)*: переопределение эндпоинта для прокси/зеркала (обычно не нужно).
 - **Провайдер Codex**: работает через запуск локального `codex app-server` (stdio JSON-RPC, метод `account/rateLimits/read`). Не обращается к внешним refresh-эндпоинтам и не обновляет OAuth-токены напрямую. Требует установленный Codex CLI и выполненный вход (`codex login`). По умолчанию бинарник ищется в `PATH`, `~/.local/node/bin/codex` и `~/.local/node-v*/bin/codex`; при необходимости путь задаётся через `LLM_LIMITS_CODEX_BIN`.
+- **Провайдер OpenCode Go**: читает ключ консоли (`OPENCODE_GO_API_KEY`) и обращается к `/zen/go/v1/usage` обычным Bearer-заголовком — без OAuth refresh-токенов и без консольного эндпоинта бюджетов (он требует OAuth-сессию и для API-ключа отвечает `403`). Лимиты плана заданы в долларах, поэтому карточка показывает и процент, и остаток в деньгах.
 - Полей `quota`/`probe` нет — каждый тип сохраняет свою логику фетча как есть.
-- Если `providers` отсутствует — используются встроенные дефолты (`kimi`, `openrouter`, `agy`), старый конфиг работает без правки.
+- Если `providers` отсутствует — используются встроенные дефолты (`kimi`, `openrouter`, `opencode`, `agy`), старый конфиг работает без правки.
 
 ### Переменные окружения
 
@@ -290,6 +297,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 > [!NOTE]
 > **История версий**:
+> - **v2.2.0**: Новый провайдер OpenCode Go — долларовые окна 5ч / 7д / 30д (`$12` / `$30` / `$60`) прямо из `https://opencode.ai/zen/go/v1/usage` по ключу консоли (`OPENCODE_GO_API_KEY`); на карточке процент, таймер сброса и остаток в долларах, `rate-limited` показывается как исчерпанный лимит, отсутствующие окна — как `--`. OAuth-токены не используются.
 > - **v2.1.7**: Поддержка AGY (Antigravity CLI) Windows 1.5.4 — структурная валидация нового файла кредов (`acp_token.json`) вместе с legacy-путями (read-only; битый/нерелевантный файл не запускает CLI вообще, риска OAuth-попапа нет). После auth-failure — включая молчаливый таймаут, когда CLI ждёт входа через браузер, — лаунчер фиксирует fingerprint кредов и не перезапускает AGY, пока креды реально не изменятся или пользователь явно не запросит retry (force refresh / `--no-cache`); повторных окон браузера каждую минуту нет. Отозванная сессия при первом запуске всё же может один раз открыть браузер — latch подавляет только повторы. Заглушки бакетов показываются честно (`--` / «нет данных») вместо выдуманного `0%`; реальный `0%` остаётся `0%`; валидные кэшированные значения при сбоях сохраняются со статусом `stale`, а не стираются.
 > - **v2.1.5**: Расчёт расхода OpenRouter по активному `effective_budget` вместо lifetime usage; корректная обработка legacy `include_byok_in_limit`, лимитов без сброса (`limit_reset: null`), неполного бюджета и изоляции дат сброса.
 > - **v2.1.4**: Граyscale антиалиасинг текста (`TextRenderingHintAntiAliasGridFit`) вместо ClearType, устранение цветных ореолов и грязных пикселей на светлом фоне.
@@ -311,7 +319,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### Способы запуска
 
 #### 1. Запуск готового бинарника из Releases
-1. Скачайте архив `LlmLimitsOverlay-v2.1.7-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Скачайте архив `LlmLimitsOverlay-v2.2.0-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Распакуйте в любую удобную папку.
 3. Создайте `.env` с API-ключами (скопируйте из `.env.example`).
 4. Убедитесь, что `agy.exe` установлен и вы авторизованы (`agy auth login`).
@@ -337,7 +345,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows-установщик (v2.0.0+)
-Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.1.7.exe` (Inno Setup 6).
+Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.2.0.exe` (Inno Setup 6).
 
 **Возможности:**
 - Устанавливает `llm-limits-overlay.exe` (GUI) и `llm-limits.exe` (CLI) в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
@@ -350,7 +358,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 
 **Тихая установка (для автоматизации):**
 ```cmd
-LlmLimitsOverlay-Setup-2.1.7.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **Предупреждение SmartScreen**: установщик не подписан цифровой подписью (нет EV-сертификата). Windows SmartScreen покажет «Защита Windows» — нажмите «Подробнее» → «Всё равно запустить». Это нормально для open-source проектов без платного сертификата.

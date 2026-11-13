@@ -47,7 +47,7 @@ func run(args []string) int {
 		return 0
 	}
 	if opt.version {
-		fmt.Println("llm-limits 2.1.7")
+		fmt.Println("llm-limits 2.2.0")
 		return 0
 	}
 
@@ -77,15 +77,20 @@ func run(args []string) int {
 			}
 		}
 		if !found {
-			if strings.EqualFold(opt.provider, "codex") {
-				codexP := config.Provider{Id: "codex", Type: "codex", Title: "CODEX", Enabled: true}
-				providers = append(providers, codexP)
-				cfg.Providers = append(cfg.Providers, codexP)
-				found = true
-			} else {
+			var extra config.Provider
+			switch opt.provider {
+			case "codex":
+				extra = config.Provider{Id: "codex", Type: "codex", Title: "CODEX", Enabled: true}
+			case "opencode":
+				extra = config.Provider{Id: "opencode", Type: "opencode", Title: "OPENCODE GO", BaseUrl: "https://opencode.ai/zen/go/v1", ApiKeyEnv: "OPENCODE_GO_API_KEY", Enabled: true}
+			}
+			if extra.Id == "" {
 				fmt.Fprintf(os.Stderr, "llm-limits: unknown provider id '%s' (check overlay.config.json providers).\n", opt.provider)
 				return 1
 			}
+			providers = append(providers, extra)
+			cfg.Providers = append(cfg.Providers, extra)
+			found = true
 		}
 	}
 
@@ -313,6 +318,14 @@ func render(opt *options, snap *model.Snapshot) {
 			fmt.Printf("       %s  reset %s  free %d/%d  rem. $%s\n",
 				pct, safe(or.ResetIn), or.FreeDailyUsed, or.FreeDailyLimit,
 				fmt.Sprintf("%.2f", or.LimitRemaining))
+		case "opencode":
+			if st.OpenCode == nil {
+				continue
+			}
+			renderHeader(p.Title, st.Status, st.LastUpdated)
+			renderWindow("  5ч", st.OpenCode.Rolling)
+			renderWindow("  7д", st.OpenCode.Weekly)
+			renderWindow("  30д", st.OpenCode.Monthly)
 		case "codex":
 			if st.Codex == nil {
 				continue
@@ -360,6 +373,22 @@ func renderBucket(label string, b model.Bucket) {
 		return
 	}
 	fmt.Printf("       %s  %s%%  reset %s\n", label, trimFloat(b.UsedPercent), safe(b.ResetIn))
+}
+
+// renderWindow — окно OpenCode Go: процент, сброс и остаток в долларах плана.
+func renderWindow(label string, w model.Window) {
+	if w.Placeholder {
+		fmt.Printf("       %s  нет данных  reset --\n", label)
+		return
+	}
+	line := fmt.Sprintf("       %s  %s%%  reset %s", label, trimFloat(w.UsedPercent), safe(w.ResetIn))
+	if w.LimitUSD > 0 {
+		line += fmt.Sprintf("  ост. $%.2f из $%.0f", w.RemainingUSD, w.LimitUSD)
+	}
+	if w.Limited {
+		line += "  (лимит исчерпан)"
+	}
+	fmt.Println(line)
 }
 
 func safe(s string) string {
@@ -473,6 +502,19 @@ func buildPayload(opt *options, snap *model.Snapshot) map[string]interface{} {
 				"free_daily_used":  or.FreeDailyUsed,
 				"free_daily_limit": or.FreeDailyLimit,
 			}
+		case "opencode":
+			if st.OpenCode == nil {
+				continue
+			}
+			oc := st.OpenCode
+			pr[p.Id] = map[string]interface{}{
+				"status":       st.Status,
+				"last_updated": st.LastUpdated,
+				"plan":         oc.Plan,
+				"rolling":      windowJson(oc.Rolling),
+				"weekly":       windowJson(oc.Weekly),
+				"monthly":      windowJson(oc.Monthly),
+			}
 		case "codex":
 			if st.Codex == nil {
 				continue
@@ -521,6 +563,15 @@ func bucketJson(b model.Bucket) map[string]interface{} {
 		"reset_in":      b.ResetIn,
 		"placeholder":   b.Placeholder,
 	}
+}
+
+func windowJson(w model.Window) map[string]interface{} {
+	m := bucketJson(w.Bucket)
+	m["name"] = w.Name
+	m["limit_usd"] = w.LimitUSD
+	m["remaining_usd"] = w.RemainingUSD
+	m["limited"] = w.Limited
+	return m
 }
 
 // ------------------------------------------------------------------
@@ -584,7 +635,7 @@ func isTTY() bool {
 }
 
 func printHelp() {
-	fmt.Println("llm-limits 2.1.7 - LLM quota status in the terminal (Kimi / OpenRouter / Gemini+Claude-GPT / Codex)")
+	fmt.Println("llm-limits 2.2.0 - LLM quota status in the terminal (Kimi / OpenRouter / OpenCode Go / Gemini+Claude-GPT / Codex)")
 	fmt.Println()
 	fmt.Println("Usage: llm-limits [options]")
 	fmt.Println()
@@ -599,7 +650,7 @@ func printHelp() {
 	fmt.Println("  --agy-bin <path>        Explicit path to agy binary")
 	fmt.Println("  --agy-timeout <sec>     agy spawn timeout, 1..120 (default: Windows 8s, Linux/macOS 20s; env LLM_LIMITS_AGY_TIMEOUT)")
 	fmt.Println("  --no-color              Disable ANSI colors (also honors NO_COLOR)")
-	fmt.Println("  --version, -v           Show version (2.1.7)")
+	fmt.Println("  --version, -v           Show version (2.2.0)")
 	fmt.Println("  --help                  Show this help")
 	fmt.Println()
 	fmt.Println("Exit codes: 0 = all providers online, 2 = some stale, 1 = all failed / config error")

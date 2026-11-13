@@ -476,6 +476,8 @@ func CalculateWindowHeight(snap *model.Snapshot, cfg *config.Config) int32 {
 			} else {
 				h += 62
 			}
+		} else if p.Type == "opencode" {
+			h += 124 // три окна: 5ч / 7д / 30д
 		}
 	}
 
@@ -708,6 +710,56 @@ func (r *Renderer) Render(snap *model.Snapshot, cfg *config.Config) error {
 				sPctColor, sPctFont := getPercentColorAndFont(secPct, secFrac, r)
 				r.drawString(formatPercent(secPct), contentX+contentW-80, rSecY, 80, 16, sPctFont, sPctColor, true)
 				r.drawProgressBar(contentX, curY+75, contentW, barHeight, secFrac)
+			}
+
+			curY += cardH
+
+		case "opencode":
+			st := findProviderState(snap, p.Id)
+			status := "online"
+			updated := ""
+			windows := []model.Window{}
+			if st != nil {
+				status = st.Status
+				updated = st.LastUpdated
+				if st.OpenCode != nil {
+					windows = []model.Window{st.OpenCode.Rolling, st.OpenCode.Weekly, st.OpenCode.Monthly}
+				}
+			}
+
+			cardH := float32(124)
+			r.drawCardBackground(cardX, curY, cardW, cardH)
+
+			title := p.Title
+			if title == "" {
+				title = "OPENCODE GO"
+			}
+			r.drawString(title, contentX, curY+8, 150, 16, r.fontTitle, colorHeader, false)
+			timeText, timeColor := getRelativeTimeString(updated, status)
+			r.drawString(timeText, contentX+contentW-120, curY+9, 120, 16, r.fontMeta, timeColor, true)
+
+			for i := 0; i < 3; i++ {
+				rowY := curY + 28 + float32(i)*28
+				name := "--"
+				pct, frac, reset := 0.0, 0.0, "--"
+				placeholder := true
+				if i < len(windows) {
+					w := windows[i]
+					name = w.Name
+					pct = w.UsedPercent
+					frac = w.UsedFraction
+					reset = w.ResetIn
+					placeholder = w.Placeholder
+				}
+				r.drawString(name+" · "+formatResetTimeLabel(reset), contentX, rowY, 150, 16, r.fontRow, colorLabel, false)
+				pctText, ok := agyBucketPctText(placeholder, pct)
+				if !ok {
+					r.drawString(pctText, contentX+contentW-80, rowY, 80, 16, r.fontRow, colorLabel, true)
+				} else {
+					c, f := getPercentColorAndFont(pct, frac, r)
+					r.drawString(pctText, contentX+contentW-80, rowY, 80, 16, f, c, true)
+					r.drawProgressBar(contentX, rowY+16, contentW, barHeight, frac)
+				}
 			}
 
 			curY += cardH

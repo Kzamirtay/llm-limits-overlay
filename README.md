@@ -2,7 +2,7 @@
 
 **English** | [Русский](README.ru.md)
 
-**LLM Limits Overlay** is a compact Always-on-Top HUD overlay for Windows 10/11 featuring lightweight translucency (~49%), monochrome consumption gauges, and sharp ClearType typography. It provides real-time visibility into usage quotas and reset limits for popular AI models: **Gemini**, **Claude / GPT**, **Kimi**, and **OpenRouter** in a single minimalist floating window.
+**LLM Limits Overlay** is a compact Always-on-Top HUD overlay for Windows 10/11 featuring lightweight translucency (~49%), monochrome consumption gauges, and sharp ClearType typography. It provides real-time visibility into usage quotas and reset limits for popular AI models: **Gemini**, **Claude / GPT**, **Kimi**, **OpenRouter**, and **OpenCode Go** in a single minimalist floating window.
 
 ---
 
@@ -33,14 +33,14 @@
   - Per-provider timeouts: HTTP 3.5 s for OpenRouter / Kimi; 8 s for `agy.exe`.
   - Antigravity quota caching (300 s in `%TEMP%\llm_limits_agy_usage_cache.json`) keeps the `agy.exe` call rate minimal while OpenRouter and Kimi are refreshed on every 60-second polling cycle.
 - **Per-Card Update Timestamps (v1.2.0+)**:
-  - Each of the three cards (KIMI / OPENROUTER / GEMINI+CLAUDE-GPT) shows its own relative update age (`только что`, `N мин`) in the bottom-right corner.
+  - Each card (KIMI / OPENROUTER / OPENCODE GO / GEMINI+CLAUDE-GPT) shows its own relative update age (`только что`, `N мин`) in the bottom-right corner.
   - Providers update independently, so the ages can differ across cards; a failed provider keeps the time of its **last successful fetch** and gets a ` (stale)` suffix on its own card only.
 
 ---
 
 ## Quota Metrics Displayed
 
-The overlay presents information in three logical vertical cards from top to bottom:
+The overlay presents information in logical vertical cards from top to bottom:
 
 1. **KIMI** (Top card):
    - **Weekly Limit (7d)**: Time until quota reset (e.g., `3d 8h`), percentage consumed (`100%`), and visual progress gauge.
@@ -52,7 +52,13 @@ The overlay presents information in three logical vertical cards from top to bot
    - **Secondary Status Line**: Free tier daily requests used (`free: 0/1000`) and remaining credit balance (`rem. $9.63`).
    - Source: `GET https://openrouter.ai/api/v1/key` (HTTP Bearer auth).
 
-3. **GEMINI + CLAUDE / GPT** (Bottom combined card):
+3. **OPENCODE GO** (subscription card; without `OPENCODE_GO_API_KEY` it shows «нет ключа» and makes no HTTP request):
+   - Three dollar-denominated windows from the OpenCode Go plan ($12 / 5h, $30 / week, $60 / month):
+     **5h**, **7d**, **30d** — percentage consumed, time until reset, and the remaining amount in dollars.
+   - Source: `GET https://opencode.ai/zen/go/v1/usage` (Bearer console API key; response `{usage:{rolling,weekly,monthly}}` with `status`, `percent`, `resetsAt`). No OAuth token is touched, the request does not consume quota.
+   - An exhausted window (`status: rate-limited`) is shown as `critical` / `100%`; a window missing from the response is rendered as `--` instead of a fabricated `0%`.
+
+4. **GEMINI + CLAUDE / GPT** (Bottom combined card):
    - Grouped into a single card separated by a subtle divider:
      - **GEMINI**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
      - **CLAUDE / GPT**: Weekly rolling window (7d, top) and 5-hour rolling window (5h, bottom).
@@ -201,13 +207,14 @@ The configuration file is automatically created next to the executable if not pr
 
 ### Providers in config
 
-By default the overlay shows the built-in three: **KIMI**, **OPENROUTER**, **GEMINI + CLAUDE/GPT**. You can redefine the list with the `providers` array in `overlay.config.json` — cards are built dynamically from it (GUI and CLI):
+By default the overlay shows the built-in four: **KIMI**, **OPENROUTER**, **OPENCODE GO**, **GEMINI + CLAUDE/GPT**. You can redefine the list with the `providers` array in `overlay.config.json` — cards are built dynamically from it (GUI and CLI):
 
 ```json
 {
   "providers": [
     { "id": "kimi", "type": "kimi", "title": "KIMI", "apiKeyEnv": "KIMI_API_KEY" },
     { "id": "openrouter", "type": "openrouter", "title": "OPENROUTER", "apiKeyEnv": "OPENROUTER_API_KEY" },
+    { "id": "opencode", "type": "opencode", "title": "OPENCODE GO", "apiKeyEnv": "OPENCODE_GO_API_KEY" },
     { "id": "codex", "type": "codex", "title": "CODEX" },
     { "id": "agy", "type": "agy", "title": "GEMINI + CLAUDE/GPT" }
   ]
@@ -215,14 +222,15 @@ By default the overlay shows the built-in three: **KIMI**, **OPENROUTER**, **GEM
 ```
 
 - `id`: unique key — the provider block in `limits.json` is stored as `data.<id>` (backward compatible: `kimi`/`openrouter` keep their legacy shapes).
-- `type`: `kimi` (Kimi windows 5h/7d from `{baseUrl or https://api.kimi.com/coding/v1}/usages`) | `openrouter` (credits + free pool from `{baseUrl or https://openrouter.ai/api/v1}/key`) | `agy` (native `agy.exe`) | `codex` (ChatGPT Codex CLI quotas via local `codex app-server`). **Unknown types are skipped with a warning in the log — a new provider means a new type in code.**
+- `type`: `kimi` (Kimi windows 5h/7d from `{baseUrl or https://api.kimi.com/coding/v1}/usages`) | `openrouter` (credits + free pool from `{baseUrl or https://openrouter.ai/api/v1}/key`) | `agy` (native `agy.exe`) | `codex` (ChatGPT Codex CLI quotas via local `codex app-server`) | `opencode` (OpenCode Go plan windows 5h/7d/30d from `{baseUrl or https://opencode.ai/zen/go/v1}/usage`). **Unknown types are skipped with a warning in the log — a new provider means a new type in code.**
 - `title`: card header text.
 - `apiKeyEnv`: name of the variable in `.env`/environment holding the key. Not needed for `codex` or `agy`. Several entries of the same type = several cards with their own keys (`apiKey` inline is also supported, but prefer `apiKeyEnv` — inline keys end up in the config file).
 - `enabled: false` — card hidden.
 - `baseUrl` *(optional)*: endpoint override for a proxy/mirror (usually not needed).
 - **Codex Provider**: works by querying the local `codex app-server` (stdio JSON-RPC, `account/rateLimits/read` method). Does not query external refresh endpoints or modify OAuth tokens directly. Requires Codex CLI installed and logged in (`codex login`). Binary is discovered via `PATH`, `~/.local/node/bin/codex`, `~/.local/node-v*/bin/codex`, or overridden by `LLM_LIMITS_CODEX_BIN`.
+- **OpenCode Go Provider**: reads the console API key (`OPENCODE_GO_API_KEY`) and calls `/zen/go/v1/usage` with a plain Bearer header — no OAuth refresh tokens, no console budget endpoint (that one requires an OAuth session and answers `403` for API keys). The plan limits are dollar-based, so the card shows both the percentage and the remaining dollars.
 - No `quota`/`probe` fields are used — each type keeps its own fetch logic as-is.
-- When `providers` is absent, the built-in defaults (`kimi`, `openrouter`, `agy`) are used — an old config keeps working unchanged.
+- When `providers` is absent, the built-in defaults (`kimi`, `openrouter`, `opencode`, `agy`) are used — an old config keeps working unchanged.
 
 ### Environment Variables
 
@@ -292,6 +300,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
+> - **v2.2.0**: New OpenCode Go provider — 5h / 7d / 30d dollar windows (`$12` / `$30` / `$60`) taken straight from `https://opencode.ai/zen/go/v1/usage` with the console API key (`OPENCODE_GO_API_KEY`); percentage, reset countdown and remaining dollars on the card, `rate-limited` shown as exhausted, missing windows shown as `--`. No OAuth tokens involved.
 > - **v2.1.7**: AGY (Antigravity CLI) Windows 1.5.4 support — structural validation of the new credential file (`acp_token.json`) alongside legacy paths (read-only; malformed/irrelevant files never launch the CLI, so no OAuth popup risk from a broken file). After an auth failure — including a silent timeout while the CLI waits for browser sign-in — the launcher latches on the credential fingerprint and does not relaunch AGY until the credentials actually change or the user explicitly retries (force refresh / `--no-cache`); no repeated browser windows every minute. A revoked session may still open one browser window on the first launch; the latch suppresses only repeats. Placeholder buckets are now shown honestly (`--` / `нет данных`) instead of a fabricated `0%`; a real `0%` stays `0%`; cached valid values survive failures as `stale` instead of being erased.
 > - **v2.1.5**: OpenRouter quota calculation now uses the active `effective_budget` (instead of mixing all-time usage with periodic limits); fixed legacy `include_byok_in_limit`, non-periodic limit handling (`limit_reset: null`), incomplete budget fallback, and budget reset isolation.
 > - **v2.1.4**: Grayscale anti-aliased text rendering (`TextRenderingHintAntiAliasGridFit`) replacing ClearType to prevent colored halos and dirty pixel artifacts on translucent and light backgrounds.
@@ -313,7 +322,7 @@ The following files must be located in the same directory as `llm-limits-overlay
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download the latest `LlmLimitsOverlay-v2.1.7-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download the latest `LlmLimitsOverlay-v2.2.0-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
 4. Ensure `agy.exe` is installed and you are signed in (`agy auth login`).
@@ -339,7 +348,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows Installer (v2.0.0+)
-A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.7.exe` (Inno Setup 6).
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.2.0.exe` (Inno Setup 6).
 
 **Features:**
 - Installs `llm-limits-overlay.exe` (GUI) and `llm-limits.exe` (CLI) to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
@@ -352,7 +361,7 @@ A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.1.7.exe` (I
 
 **Silent install (for automation):**
 ```cmd
-LlmLimitsOverlay-Setup-2.1.7.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.
@@ -366,7 +375,7 @@ LlmLimitsOverlay-Setup-2.1.7.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 A companion console utility ships next to the GUI (same Go fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
 
 ```cmd
-llm-limits --version         # prints "llm-limits 2.1.7"
+llm-limits --version         # prints "llm-limits 2.2.0"
 llm-limits --json            # works from any folder — installer adds it to your user PATH
 llm-limits --provider kimi
 llm-limits --watch 30        # refresh loop; Ctrl+C to exit

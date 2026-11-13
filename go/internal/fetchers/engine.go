@@ -61,6 +61,8 @@ func FetchAll(cfg *config.Config, opts Options) *model.Snapshot {
 				block = FetchOpenRouter(appDir, pc, ep)
 			} else if pc.Type == "codex" {
 				block = FetchCodex(appDir, pc)
+			} else if pc.Type == "opencode" {
+				block = FetchOpenCode(appDir, pc, ep)
 			} else {
 				block = FetchKimi(appDir, pc, ep)
 			}
@@ -194,6 +196,9 @@ func assemble(cfg *config.Config, appDir, nowIso string, agyRes *AgyResult, prov
 	if cx, ok := providerBlocks["codex"]; ok {
 		payload["codex"] = cx
 	}
+	if oc, ok := providerBlocks["opencode"]; ok {
+		payload["opencode"] = oc
+	}
 
 	WriteAtomicJson(filepath.Join(appDir, "limits.json"), payload)
 
@@ -218,6 +223,9 @@ func assemble(cfg *config.Config, appDir, nowIso string, agyRes *AgyResult, prov
 		} else if _, ok := block["plan_type"]; ok || getMap(block, "primary") != nil {
 			st.Kind = "codex"
 			st.Codex = CodexToState(block)
+		} else if getMap(block, "rolling") != nil && getMap(block, "monthly") != nil {
+			st.Kind = "opencode"
+			st.OpenCode = OpenCodeToState(block)
 		} else {
 			st.Kind = "openrouter"
 			st.OpenRouter = OpenRouterToState(block)
@@ -313,6 +321,9 @@ func LoadSnapshotFromDisk(cfg *config.Config, appDir string) *model.Snapshot {
 		} else if _, ok := block["plan_type"]; ok || getMap(block, "primary") != nil {
 			st.Kind = "codex"
 			st.Codex = CodexToState(block)
+		} else if getMap(block, "rolling") != nil && getMap(block, "monthly") != nil {
+			st.Kind = "opencode"
+			st.OpenCode = OpenCodeToState(block)
 		} else {
 			st.Kind = "openrouter"
 			st.OpenRouter = OpenRouterToState(block)
@@ -341,14 +352,16 @@ func orderedIds(m map[string]map[string]interface{}) []string {
 			return 2
 		case "codex":
 			return 3
-		default:
+		case "opencode":
 			return 4
+		default:
+			return 5
 		}
 	}
 	var pref, rest []string
 	for id := range m {
 		switch id {
-		case "kimi", "openrouter", "codex":
+		case "kimi", "openrouter", "codex", "opencode":
 			pref = append(pref, id)
 		default:
 			rest = append(rest, id)
@@ -470,6 +483,23 @@ func extractProviderBlock(id string, payload map[string]interface{}) map[string]
 			return v
 		}
 		if getMap(payload, "primary") != nil {
+			return payload
+		}
+		return nil
+	}
+	if id == "opencode" {
+		if d != nil {
+			if v := getMap(d, "opencode"); v != nil {
+				return v
+			}
+			if getMap(d, "rolling") != nil && getMap(d, "monthly") != nil {
+				return d
+			}
+		}
+		if v := getMap(payload, "opencode"); v != nil {
+			return v
+		}
+		if getMap(payload, "rolling") != nil && getMap(payload, "monthly") != nil {
 			return payload
 		}
 		return nil
