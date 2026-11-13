@@ -19,7 +19,7 @@
 ## Features
 
 - **Always-on-Top HUD**: Floats seamlessly above all windows in the bottom-right corner of the screen above the taskbar.
-- **Dynamic Height Auto-Sizing**: Window height is automatically calculated on each render based on configured provider cards (`render.go`), so card shadows and rounded bottom corners are never clipped.
+- **Dynamic Height Auto-Sizing**: Window height is automatically calculated on each render based on configured provider cards (`render.go`), so card shadows and rounded bottom corners are never clipped. The anchored point is the **bottom edge**: when cards collapse or appear, the window grows upward / shrinks downward and the bottom stays in place (`window.pos.json` stores it as `bottom`).
 - **Zero Desktop Clutter**:
   - Style `WS_EX_TOOLWINDOW`: Does not take up space on the Windows taskbar and is excluded from the `Alt-Tab` application switcher.
   - Native Windows GUI subsystem (`-ldflags="-H windowsgui"`): Launches silently without flashing CMD/PowerShell console windows or helper launchers.

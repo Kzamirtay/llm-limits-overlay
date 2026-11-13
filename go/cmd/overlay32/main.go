@@ -54,9 +54,13 @@ var (
 	currentHeight int32 = defaultHeight
 )
 
+// WindowPosition — сохранённая позиция окна. Bottom — «закрепляемая» нижняя
+// кромка: высота оверлея меняется (карточки схлопываются), и при старте окно
+// должно расти/сжиматься вверх, оставляя нижнюю кромку на месте.
 type WindowPosition struct {
-	X int `json:"x"`
-	Y int `json:"y"`
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Bottom int `json:"bottom,omitempty"`
 }
 
 func initAppDir() {
@@ -165,11 +169,21 @@ func loadWindowPosition(h int32) (int32, int32) {
 		var pos WindowPosition
 		if json.Unmarshal(raw, &pos) == nil && (pos.X != 0 || pos.Y != 0) {
 			isUserPositioned = true
-			clampedX, clampedY := clampWindowPosition(int32(pos.X), int32(pos.Y), windowWidth, h, wa)
-			if clampedX != int32(pos.X) || clampedY != int32(pos.Y) {
-				fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] saved position (%d, %d) clamped to work area (%d, %d) [workArea: Left=%d Top=%d Right=%d Bottom=%d]", pos.X, pos.Y, clampedX, clampedY, wa.Left, wa.Top, wa.Right, wa.Bottom))
-				saveWindowPosition(clampedX, clampedY)
+			// Приоритет у нижней кромки: окно «растёт вверх» от сохранённого низа.
+			// Старый файл без bottom читается по верхней координате (как раньше).
+			y := int32(pos.Y)
+			if pos.Bottom > 0 {
+				y = int32(pos.Bottom) - h
 			}
+			clampedX, clampedY := clampWindowPosition(int32(pos.X), y, windowWidth, h, wa)
+			if clampedX != int32(pos.X) || clampedY != y {
+				fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] saved position (%d, %d) clamped to work area (%d, %d) [workArea: Left=%d Top=%d Right=%d Bottom=%d]", pos.X, y, clampedX, clampedY, wa.Left, wa.Top, wa.Right, wa.Bottom))
+			}
+			// Файл всегда хранит разрешённую позицию и актуальную нижнюю кромку.
+			if clampedX != int32(pos.X) || clampedY != y {
+				fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] saved position bottom=%d -> y=%d (h=%d)", pos.Bottom, clampedY, h))
+			}
+			saveWindowPosition(clampedX, clampedY, h)
 			return clampedX, clampedY
 		}
 	}
@@ -180,18 +194,23 @@ func loadWindowPosition(h int32) (int32, int32) {
 	return x, y
 }
 
-func saveWindowPosition(x, y int32) {
+func saveWindowPosition(x, y, h int32) {
 	if x <= 0 && y <= 0 {
 		return
 	}
-	pos := WindowPosition{X: int(x), Y: int(y)}
+	pos := WindowPosition{X: int(x), Y: int(y), Bottom: int(y + h)}
 	b, err := json.MarshalIndent(pos, "", "  ")
-	if err == nil {
-		posPath := filepath.Join(appDir, "window.pos.json")
-		tmp := posPath + ".tmp"
-		if os.WriteFile(tmp, b, 0o644) == nil {
-			os.Rename(tmp, posPath)
-		}
+	if err != nil {
+		return
+	}
+	posPath := filepath.Join(appDir, "window.pos.json")
+	tmp := posPath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		fetchers.LogLine(appDir, "[overlay32] save position failed: "+err.Error())
+		return
+	}
+	if err := os.Rename(tmp, posPath); err != nil {
+		fetchers.LogLine(appDir, "[overlay32] save position rename failed: "+err.Error())
 	}
 }
 
@@ -239,7 +258,7 @@ func resetPosition() {
 	isUserPositioned = false
 	wa := getWorkArea()
 	posX, posY = getDefaultPosition(currentHeight, wa)
-	saveWindowPosition(posX, posY)
+	saveWindowPosition(posX, posY, currentHeight)
 	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] reset position to (%d, %d) [workArea: Left=%d Top=%d Right=%d Bottom=%d]", posX, posY, wa.Left, wa.Top, wa.Right, wa.Bottom))
 	if mainHWND != 0 {
 		procSetWindowPos.Call(mainHWND, 0, uintptr(posX), uintptr(posY), uintptr(windowWidth), uintptr(currentHeight), uintptr(SWP_NOZORDER|SWP_NOACTIVATE))
@@ -258,8 +277,12 @@ func applyWindowHeight(hwnd uintptr, newH int32) {
 	if !isUserPositioned {
 		posX, posY = getDefaultPosition(newH, wa)
 	} else {
-		posY = posY - (newH - oldH)
+		// Закреплённая точка — нижняя кромка: она остаётся на месте,
+		// верхняя уезжает вниз при схлопывании карточек и вверх при росте.
+		bottom := posY + oldH
+		posY = bottom - newH
 		posX, posY = clampWindowPosition(posX, posY, windowWidth, newH, wa)
+		saveWindowPosition(posX, posY, newH)
 	}
 
 	if renderer != nil {
@@ -273,6 +296,7 @@ func applyWindowHeight(hwnd uintptr, newH int32) {
 	}
 
 	procSetWindowPos.Call(hwnd, 0, uintptr(posX), uintptr(posY), uintptr(windowWidth), uintptr(newH), uintptr(SWP_NOZORDER|SWP_NOACTIVATE))
+	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] resize h=%d->%d y=%d bottom=%d userPos=%v", oldH, newH, posY, posY+newH, isUserPositioned))
 }
 
 func requestRender() {
@@ -329,7 +353,7 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		posX = rect.Left
 		posY = rect.Top
 		isUserPositioned = true
-		saveWindowPosition(posX, posY)
+		saveWindowPosition(posX, posY, currentHeight)
 		return 0
 
 	case WM_HOTKEY:
