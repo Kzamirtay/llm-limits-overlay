@@ -49,7 +49,7 @@ func run(args []string) int {
 		return 0
 	}
 	if opt.version {
-		fmt.Println("llm-limits 2.2.0")
+		fmt.Println("llm-limits 2.2.1")
 		return 0
 	}
 
@@ -191,36 +191,26 @@ func parseArgs(args []string) (*options, string) {
 }
 
 func defaultAgyTimeout() int {
-	if os.Getenv("GOOS") == "windows" || isWindows() {
-		return 8
-	}
-	return 20
+	return fetchers.DefaultAgyTimeoutSec()
 }
 
-func isWindows() bool {
-	return filepath.Separator == '\\' || os.PathSeparator == '\\'
-}
-
-func effectiveAgyTimeout(opt *options) int {
-	if opt.agyTimeout > 0 {
-		return opt.agyTimeout
+func effectiveAgyTimeout(opt *options, cfg *config.Config) int {
+	cfgSec := 0
+	if cfg != nil {
+		cfgSec = cfg.AgyTimeoutSec
 	}
-	if v := os.Getenv("LLM_LIMITS_AGY_TIMEOUT"); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 1 && n <= 120 {
-			return n
-		}
-	}
-	return defaultAgyTimeout()
+	return fetchers.ResolveAgyTimeout(opt.agyTimeout, cfgSec)
 }
 
 func fetchOnce(opt *options, cfg *config.Config, appDir string) *model.Snapshot {
-	timeout := effectiveAgyTimeout(opt)
+	timeout := effectiveAgyTimeout(opt, cfg)
 	effectiveCfg := cfg
 	if opt.provider != "" {
 		effectiveCfg = &config.Config{
 			Path:               cfg.Path,
 			ClickThrough:       cfg.ClickThrough,
 			ClickThroughHotkey: cfg.ClickThroughHotkey,
+			AgyTimeoutSec:      cfg.AgyTimeoutSec,
 		}
 		for _, p := range cfg.EffectiveProviders() {
 			if strings.EqualFold(p.Id, opt.provider) {
@@ -670,7 +660,7 @@ func isTTY() bool {
 }
 
 func printHelp() {
-	fmt.Println("llm-limits 2.2.0 - LLM quota status in the terminal (Kimi / OpenRouter / OpenCode Go / Gemini+Claude-GPT / Codex)")
+	fmt.Println("llm-limits 2.2.1 - LLM quota status in the terminal (Kimi / OpenRouter / OpenCode Go / Gemini+Claude-GPT / Codex)")
 	fmt.Println()
 	fmt.Println("Usage: llm-limits [options]")
 	fmt.Println()
@@ -683,9 +673,9 @@ func printHelp() {
 	fmt.Println("  --env <path>            Use explicit .env file")
 	fmt.Println("  --config <path>         Use explicit overlay.config.json")
 	fmt.Println("  --agy-bin <path>        Explicit path to agy binary")
-	fmt.Println("  --agy-timeout <sec>     agy spawn timeout, 1..120 (default: Windows 8s, Linux/macOS 20s; env LLM_LIMITS_AGY_TIMEOUT)")
+	fmt.Println("  --agy-timeout <sec>     agy spawn timeout, 1..120 (default: Windows 25s, Linux/macOS 20s; env LLM_LIMITS_AGY_TIMEOUT, config \"agyTimeout\")")
 	fmt.Println("  --no-color              Disable ANSI colors (also honors NO_COLOR)")
-	fmt.Println("  --version, -v           Show version (2.2.0)")
+	fmt.Println("  --version, -v           Show version (2.2.1)")
 	fmt.Println("  --help                  Show this help")
 	fmt.Println()
 	fmt.Println("Exit codes: 0 = all providers online, 2 = some stale, 1 = all failed / config error")

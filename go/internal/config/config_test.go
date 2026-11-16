@@ -221,3 +221,44 @@ func TestLoad_LegacyKeysIgnored(t *testing.T) {
 		t.Errorf("expected 0 log errors when legacy keys are present, got: %v", logs)
 	}
 }
+
+func TestLoad_AgyTimeout(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"valid", `{"agyTimeout": 25}`, 25},
+		{"lower bound", `{"agyTimeout": 1}`, 1},
+		{"upper bound", `{"agyTimeout": 120}`, 120},
+		{"zero ignored", `{"agyTimeout": 0}`, 0},
+		{"too big ignored", `{"agyTimeout": 500}`, 0},
+		{"negative ignored", `{"agyTimeout": -5}`, 0},
+		{"string ignored", `{"agyTimeout": "25"}`, 0},
+		{"bool ignored", `{"agyTimeout": true}`, 0},
+		{"absent", `{}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "overlay.config.json")
+			if err := os.WriteFile(cfgPath, []byte(tc.body), 0o644); err != nil {
+				t.Fatalf("WriteFile failed: %v", err)
+			}
+			var logs []string
+			SetLogFunc(func(msg string) { logs = append(logs, msg) })
+			defer SetLogFunc(nil)
+
+			cfg := Load(cfgPath)
+			if cfg.AgyTimeoutSec != tc.want {
+				t.Fatalf("AgyTimeoutSec = %d; want %d (body %s)", cfg.AgyTimeoutSec, tc.want, tc.body)
+			}
+			if len(logs) != 0 {
+				t.Fatalf("expected silent load, got logs: %v", logs)
+			}
+			// провайдеры по умолчанию не должны страдать от нового ключа
+			if len(cfg.EffectiveProviders()) == 0 {
+				t.Fatalf("expected default providers after load")
+			}
+		})
+	}
+}

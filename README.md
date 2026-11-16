@@ -197,12 +197,14 @@ The configuration file is automatically created next to the executable if not pr
 ```json
 {
   "clickThrough": true,
-  "clickThroughHotkey": "Ctrl+Alt+L"
+  "clickThroughHotkey": "Ctrl+Alt+L",
+  "agyTimeout": 25
 }
 ```
 
 - `clickThrough`: Startup click-through state (default `true`). Set to `false` for standard interactive mode.
 - `clickThroughHotkey`: Global shortcut for toggling click-through (default `"Ctrl+Alt+L"`).
+- `agyTimeout` *(optional)*: `agy.exe` spawn timeout in seconds, 1–120. Defaults to **25 s on Windows** and **20 s on Linux/macOS**: `agy.exe` weighs ~230 MB and answers in 5–8 s, so a too-small value kills the process on timeout, trips the fail-closed latch, and freezes the GEMINI card on the last snapshot until credentials change or Refresh. Precedence: `--agy-timeout` → `LLM_LIMITS_AGY_TIMEOUT` → this key → platform default; garbage and out-of-range values are ignored silently.
 
 ### Providers in config
 
@@ -261,6 +263,7 @@ Rules: a missing type or window key means **shown** (an old config keeps working
 
 - `LLM_LIMITS_CODEX_BIN`: Explicit path to `codex` binary (CLI).
 - `LLM_LIMITS_AGY_BIN`: Explicit path to `agy.exe`.
+- `LLM_LIMITS_AGY_TIMEOUT`: agy spawn timeout in seconds (1–120); beats the `agyTimeout` config key, but loses to the `--agy-timeout` flag.
 - `LLM_LIMITS_QUOTA_CACHE_SECONDS`: Cache duration for Antigravity quota calls (default `300`).
 - `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: Output path for the cached quota JSON file.
 
@@ -325,6 +328,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
+> - **v2.2.1**: The overlay no longer hardcodes an 8 s agy timeout: the Windows platform default is 25 s, overridable via `LLM_LIMITS_AGY_TIMEOUT` and the new `"agyTimeout"` key (1–120) in `overlay.config.json`. A single "Refresh" click no longer disables the agy cache until the next process restart — the bypass now lasts one cycle only (it used to re-spawn `agy.exe` every 60 s). Otherwise `agy.exe` (~230 MB, 5–8 s startup) was killed by the timeout, the fail-closed latch engaged, and the GEMINI card stayed frozen on the last snapshot until credentials changed.
 > - **v2.2.0**: New OpenCode Go provider — 5h / 7d / 30d dollar windows (`$12` / `$30` / `$60`) taken straight from `https://opencode.ai/zen/go/v1/usage` with the console API key (`OPENCODE_GO_API_KEY`); percentage, reset countdown and remaining dollars on the card, `rate-limited` shown as exhausted, missing windows shown as `--`. No OAuth tokens involved. The new `limits` config object selects which periodic windows are drawn for each provider type (card height and CLI rows follow), and an exhausted longer window hides the shorter ones.
 > - **v2.1.7**: AGY (Antigravity CLI) Windows 1.5.4 support — structural validation of the new credential file (`acp_token.json`) alongside legacy paths (read-only; malformed/irrelevant files never launch the CLI, so no OAuth popup risk from a broken file). After an auth failure — including a silent timeout while the CLI waits for browser sign-in — the launcher latches on the credential fingerprint and does not relaunch AGY until the credentials actually change or the user explicitly retries (force refresh / `--no-cache`); no repeated browser windows every minute. A revoked session may still open one browser window on the first launch; the latch suppresses only repeats. Placeholder buckets are now shown honestly (`--` / `нет данных`) instead of a fabricated `0%`; a real `0%` stays `0%`; cached valid values survive failures as `stale` instead of being erased.
 > - **v2.1.5**: OpenRouter quota calculation now uses the active `effective_budget` (instead of mixing all-time usage with periodic limits); fixed legacy `include_byok_in_limit`, non-periodic limit handling (`limit_reset: null`), incomplete budget fallback, and budget reset isolation.
@@ -347,7 +351,7 @@ The following files must be located in the same directory as `llm-limits-overlay
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download the latest `LlmLimitsOverlay-v2.2.0-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download the latest `LlmLimitsOverlay-v2.2.1-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
 4. Ensure `agy.exe` is installed and you are signed in (`agy auth login`).
@@ -373,7 +377,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows Installer (v2.0.0+)
-A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.2.0.exe` (Inno Setup 6).
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.2.1.exe` (Inno Setup 6).
 
 **Features:**
 - Installs `llm-limits-overlay.exe` (GUI) and `llm-limits.exe` (CLI) to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
@@ -386,7 +390,7 @@ A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.2.0.exe` (I
 
 **Silent install (for automation):**
 ```cmd
-LlmLimitsOverlay-Setup-2.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.2.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.
@@ -400,7 +404,7 @@ LlmLimitsOverlay-Setup-2.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 A companion console utility ships next to the GUI (same Go fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
 
 ```cmd
-llm-limits --version         # prints "llm-limits 2.2.0"
+llm-limits --version         # prints "llm-limits 2.2.1"
 llm-limits --json            # works from any folder — installer adds it to your user PATH
 llm-limits --provider kimi
 llm-limits --watch 30        # refresh loop; Ctrl+C to exit
@@ -410,7 +414,7 @@ llm-limits --env .env --agy-bin C:\tools\agy.exe
 
 - The installer adds the install folder to your **user PATH** (task "Add llm-limits.exe to user PATH", enabled by default) so `llm-limits` runs from any terminal. Terminals opened **before** the installation won't see it — open a new terminal window. The entry is removed on uninstall.
 - `--provider kimi|openrouter|agy`, `--env <path>`, `--config <path>`, `--agy-bin <path>` — overrides.
-- `--agy-timeout <sec>` (1–120) — agy spawn timeout. Platform default: **Windows 8 s, Linux/macOS 20 s** (agy can be slow in WSL/FUSE environments). Can also be set with `LLM_LIMITS_AGY_TIMEOUT` (flag wins over env, env over platform default). The GUI keeps its own fixed 8 s timeout and cache rule.
+- `--agy-timeout <sec>` (1–120) — agy spawn timeout. Platform default: **Windows 25 s, Linux/macOS 20 s** (agy can be slow in WSL/FUSE environments, and `agy.exe` is a ~230 MB binary that starts in 5–8 s). Precedence: flag → `LLM_LIMITS_AGY_TIMEOUT` → the `agyTimeout` key in `overlay.config.json` → platform default. The GUI follows the same rule (`agyTimeout`/env/default) and no longer pins 8 s.
 - `--no-color` and the `NO_COLOR` environment variable disable ANSI colors.
 - In `--watch` mode with redirected (non-TTY) output the tool prints one block per tick instead of redrawing the screen.
 - Exit codes: `0` — all providers online; `2` — some providers stale or missing key (`no_key`); `1` — all failed or bad arguments.

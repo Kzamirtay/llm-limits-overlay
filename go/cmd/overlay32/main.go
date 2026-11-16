@@ -79,6 +79,19 @@ func initAppDir() {
 	clickThrough.Store(cfg.ClickThrough)
 }
 
+// logAgyTimeout — фиксирует в логе эффективный таймаут agy: по этой строке
+// проверяется, что конфиг/env подхватились (agyTimeout не дефолтный).
+func logAgyTimeout() {
+	src := "platform default"
+	switch {
+	case fetchers.AgyTimeoutFromEnv() > 0:
+		src = "env LLM_LIMITS_AGY_TIMEOUT"
+	case cfg != nil && cfg.AgyTimeoutSec >= 1 && cfg.AgyTimeoutSec <= 120:
+		src = "overlay.config.json agyTimeout"
+	}
+	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] agy timeout %ds (%s)", agyTimeout(), src))
+}
+
 func checkSingleInstance() (uintptr, bool) {
 	mutexName, _ := windows.UTF16PtrFromString("Local\\llm-limits-overlay32-instance-guid-52b36ded")
 	hMutex, _, err := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(mutexName)))
@@ -305,6 +318,18 @@ func requestRender() {
 	}
 }
 
+// agyTimeout — эффективный таймаут запуска agy: env LLM_LIMITS_AGY_TIMEOUT →
+// overlay.config.json ("agyTimeout") → платформенный дефолт (Windows 25 с).
+// Считается на каждый цикл, чтобы правка конфига подхватывалась без перезапуска
+// процесса: agy.exe на Windows стартует 6–8 с, и жёсткие 8 с из 2.2.0 давали
+// таймаут → fail-closed latch → замершую карточку AGY.
+func agyTimeout() int {
+	if cfg == nil {
+		return fetchers.DefaultAgyTimeoutSec()
+	}
+	return fetchers.ResolveAgyTimeout(0, cfg.AgyTimeoutSec)
+}
+
 func triggerFetch(forceAgy bool) {
 	if !isFetching.CompareAndSwap(false, true) {
 		return
@@ -313,12 +338,16 @@ func triggerFetch(forceAgy bool) {
 		defer isFetching.Store(false)
 		if forceAgy {
 			fetchers.SetAgyBypassCache(true)
-			fetchers.LogLine(appDir, "[overlay32] force refresh requested (bypassing agy cache)")
+			// Bypass — только на один цикл. Раньше флаг оставался включённым до
+			// перезапуска процесса: после первого «Обновить» кэш agy (TTL 300 с)
+			// больше не читался и agy.exe запускался каждые 60 с.
+			defer fetchers.SetAgyBypassCache(false)
+			fetchers.LogLine(appDir, "[overlay32] force refresh requested (bypassing agy cache for this cycle only)")
 		}
 
 		opts := fetchers.Options{
 			AppDir:        appDir,
-			AgyTimeoutSec: 8,
+			AgyTimeoutSec: agyTimeout(),
 		}
 		snap := fetchers.FetchAll(cfg, opts)
 		if snap != nil {
@@ -401,7 +430,8 @@ func main() {
 	defer windows.CloseHandle(windows.Handle(hMutex))
 
 	initAppDir()
-	fetchers.LogLine(appDir, fmt.Sprintf("=== LLM Limits Overlay v2.2.0 Starting (PID=%d) ===", os.Getpid()))
+	fetchers.LogLine(appDir, fmt.Sprintf("=== LLM Limits Overlay v2.2.1 Starting (PID=%d) ===", os.Getpid()))
+	logAgyTimeout()
 
 	// GDI+ Startup
 	var gdiplusToken uintptr

@@ -195,12 +195,14 @@
 ```json
 {
   "clickThrough": true,
-  "clickThroughHotkey": "Ctrl+Alt+L"
+  "clickThroughHotkey": "Ctrl+Alt+L",
+  "agyTimeout": 25
 }
 ```
 
 - `clickThrough`: режим «клики насквозь» при запуске оверлея (по умолчанию `true`, включено). Задайте `false`, если требуется запуск в интерактивном режиме.
 - `clickThroughHotkey`: глобальная комбинация клавиш для быстрого переключения режима (по умолчанию `"Ctrl+Alt+L"`, поддерживает модификаторы Ctrl, Alt, Shift, Win и клавиши).
+- `agyTimeout` *(опционально)*: таймаут запуска `agy.exe` в секундах, 1–120. По умолчанию **25 с на Windows** и **20 с на Linux/macOS**: `agy.exe` весит ~230 МБ и отвечает за 5–8 с, при слишком маленьком значении процесс убивается по таймауту, срабатывает fail-closed latch, и карточка GEMINI замирает на прошлом снимке до смены кредов или «Обновить». Приоритет источников: `--agy-timeout` → `LLM_LIMITS_AGY_TIMEOUT` → этот ключ → платформенный дефолт; мусор и значения вне диапазона игнорируются молча.
 
 ### Провайдеры в конфиге
 
@@ -259,6 +261,7 @@
 
 - `LLM_LIMITS_CODEX_BIN`: явный путь к бинарнику `codex` (CLI).
 - `LLM_LIMITS_AGY_BIN`: явный путь к `agy.exe`.
+- `LLM_LIMITS_AGY_TIMEOUT`: таймаут запуска agy в секундах (1–120); важнее ключа `agyTimeout` в конфиге, но слабее флага `--agy-timeout`.
 - `LLM_LIMITS_QUOTA_CACHE_SECONDS`: время кэширования квот Antigravity (по умолчанию `300`).
 - `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: путь для выгрузки результирующего кэша JSON.
 
@@ -323,6 +326,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 > [!NOTE]
 > **История версий**:
+> - **v2.2.1**: Таймаут запуска agy в GUI больше не зашит в 8 с: платформенный дефолт на Windows — 25 с, переопределяется `LLM_LIMITS_AGY_TIMEOUT` и новым ключом `"agyTimeout"` (1–120) в `overlay.config.json`. Одно нажатие «Обновить» больше не отключает кэш agy до перезапуска процесса — bypass действует только на один цикл (раньше `agy.exe` запускался каждые 60 с). Иначе `agy.exe` (~230 МБ, старт 5–8 с) убивался по таймауту, latch закрывался, и карточка GEMINI оставалась на прошлом снимке до смены кредов.
 > - **v2.2.0**: Новый провайдер OpenCode Go — долларовые окна 5ч / 7д / 30д (`$12` / `$30` / `$60`) прямо из `https://opencode.ai/zen/go/v1/usage` по ключу консоли (`OPENCODE_GO_API_KEY`); на карточке процент, таймер сброса и остаток в долларах, `rate-limited` показывается как исчерпанный лимит, отсутствующие окна — как `--`. OAuth-токены не используются. Новый объект `limits` в конфиге выбирает, какие периодные окна рисовать для каждого типа провайдера (высота карточки и строки CLI следуют за настройкой), а исчерпанное длинное окно скрывает более короткие.
 > - **v2.1.7**: Поддержка AGY (Antigravity CLI) Windows 1.5.4 — структурная валидация нового файла кредов (`acp_token.json`) вместе с legacy-путями (read-only; битый/нерелевантный файл не запускает CLI вообще, риска OAuth-попапа нет). После auth-failure — включая молчаливый таймаут, когда CLI ждёт входа через браузер, — лаунчер фиксирует fingerprint кредов и не перезапускает AGY, пока креды реально не изменятся или пользователь явно не запросит retry (force refresh / `--no-cache`); повторных окон браузера каждую минуту нет. Отозванная сессия при первом запуске всё же может один раз открыть браузер — latch подавляет только повторы. Заглушки бакетов показываются честно (`--` / «нет данных») вместо выдуманного `0%`; реальный `0%` остаётся `0%`; валидные кэшированные значения при сбоях сохраняются со статусом `stale`, а не стираются.
 > - **v2.1.5**: Расчёт расхода OpenRouter по активному `effective_budget` вместо lifetime usage; корректная обработка legacy `include_byok_in_limit`, лимитов без сброса (`limit_reset: null`), неполного бюджета и изоляции дат сброса.
@@ -345,7 +349,7 @@ KIMI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ### Способы запуска
 
 #### 1. Запуск готового бинарника из Releases
-1. Скачайте архив `LlmLimitsOverlay-v2.2.0-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Скачайте архив `LlmLimitsOverlay-v2.2.1-win64.zip` со страницы [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Распакуйте в любую удобную папку.
 3. Создайте `.env` с API-ключами (скопируйте из `.env.example`).
 4. Убедитесь, что `agy.exe` установлен и вы авторизованы (`agy auth login`).
@@ -371,7 +375,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows-установщик (v2.0.0+)
-Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.2.0.exe` (Inno Setup 6).
+Доступен per-user установщик: `LlmLimitsOverlay-Setup-2.2.1.exe` (Inno Setup 6).
 
 **Возможности:**
 - Устанавливает `llm-limits-overlay.exe` (GUI) и `llm-limits.exe` (CLI) в `%LOCALAPPDATA%\LlmLimitsOverlay` — без запроса прав администратора (UAC).
@@ -384,7 +388,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 
 **Тихая установка (для автоматизации):**
 ```cmd
-LlmLimitsOverlay-Setup-2.2.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.2.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **Предупреждение SmartScreen**: установщик не подписан цифровой подписью (нет EV-сертификата). Windows SmartScreen покажет «Защита Windows» — нажмите «Подробнее» → «Всё равно запустить». Это нормально для open-source проектов без платного сертификата.
@@ -407,7 +411,7 @@ llm-limits --env .env --agy-bin C:\tools\agy.exe
 
 - Установщик добавляет папку установки в **PATH пользователя** (задача «Добавить llm-limits.exe в PATH пользователя», включена по умолчанию) — команда `llm-limits` доступна из любого терминала. Терминалы, открытые **до** установки, её не увидят — откройте новое окно терминала. Запись удаляется при деинсталляции.
 - `--provider kimi|openrouter|agy`, `--env <путь>`, `--config <путь>`, `--agy-bin <путь>` — переопределения.
-- `--agy-timeout <сек>` (1–120) — таймаут запуска agy. Платформенный дефолт: **Windows 8 с, Linux/macOS 20 с** (agy может отвечать медленно в WSL/FUSE-окружениях). Можно задать через `LLM_LIMITS_AGY_TIMEOUT` (флаг важнее env, env важнее платформенного дефолта). GUI использует свой фиксированный таймаут 8 с и своё кэш-правило.
+- `--agy-timeout <сек>` (1–120) — таймаут запуска agy. Платформенный дефолт: **Windows 25 с, Linux/macOS 20 с** (agy может отвечать медленно в WSL/FUSE-окружениях, а `agy.exe` ~230 МБ стартует 5–8 с). Приоритет: флаг → `LLM_LIMITS_AGY_TIMEOUT` → ключ `agyTimeout` в `overlay.config.json` → платформенный дефолт. GUI использует то же правило (`agyTimeout`/env/дефолт) и больше не зашивает 8 с.
 - `--no-color` и переменная окружения `NO_COLOR` отключают ANSI-цвета.
 - В режиме `--watch` при перенаправленном (не-TTY) выводе печатается блок за тик вместо перерисовки экрана.
 - Коды выхода: `0` — все провайдеры online; `2` — часть stale или без ключа (`no_key`); `1` — все недоступны или ошибка аргументов.

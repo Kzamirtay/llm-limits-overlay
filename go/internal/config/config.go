@@ -56,6 +56,10 @@ type Config struct {
 	ClickThrough       bool
 	ClickThroughHotkey string
 	Providers          []Provider // пусто = дефолты
+	// AgyTimeoutSec — таймаут запуска agy, секунды ("agyTimeout": 1..120).
+	// 0 = платформенный дефолт (Windows 25 с, Unix 20 с). Нужен потому, что
+	// agy.exe на Windows весит ~230 МБ и стартует 5–8 с.
+	AgyTimeoutSec int
 	// Limits — какие окна (периодные лимиты) показывать для каждого типа:
 	// {"kimi":{"7d":false},"opencode":{"5h":false},...}. Отсутствующая запись
 	// или отсутствующий ключ = показывать; false = строка скрыта.
@@ -133,6 +137,11 @@ func Load(path string) *Config {
 	}
 	if v, ok := root["clickThroughHotkey"].(string); ok && strings.TrimSpace(v) != "" {
 		cfg.ClickThroughHotkey = strings.TrimSpace(v)
+	}
+	// "agyTimeout": секунды 1..120. Мусор/вне диапазона игнорируется молча —
+	// старый конфиг обязан грузиться без ошибки.
+	if v, ok := root["agyTimeout"].(float64); ok && v >= 1 && v <= 120 {
+		cfg.AgyTimeoutSec = int(v)
 	}
 	if rawProviders, ok := root["providers"].([]interface{}); ok {
 		cfg.Providers = parseProviders(rawProviders)

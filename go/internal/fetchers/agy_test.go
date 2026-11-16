@@ -696,3 +696,32 @@ func TestAgy_BucketFromMap_PlaceholderPropagation(t *testing.T) {
 		t.Errorf("bucketFromMap(ok bucket) must not be placeholder")
 	}
 }
+
+// Bypass кэша обязан действовать только на один цикл: раньше флаг оставался
+// включённым до перезапуска процесса, и agy.exe запускался каждые 60 с.
+func TestAgyBypassCache_ClearsAfterCycle(t *testing.T) {
+	dir := t.TempDir()
+	override := filepath.Join(dir, "agy_cache.json")
+	agyCacheFileOverride = override
+	agyMemCache = nil
+	defer func() {
+		agyCacheFileOverride = ""
+		agyMemCache = nil
+		SetAgyBypassCache(false)
+	}()
+
+	saveAgyCache(map[string]interface{}{"status": "SUCCESS"}, map[string]interface{}{"groups": []interface{}{}})
+	if loadAgyCache() == nil {
+		t.Fatal("cache must be readable right after save")
+	}
+
+	SetAgyBypassCache(true)
+	if loadAgyCache() != nil {
+		t.Fatal("bypass must ignore the cache during a forced cycle")
+	}
+
+	SetAgyBypassCache(false)
+	if loadAgyCache() == nil {
+		t.Fatal("cache must be honored again after the forced cycle ends")
+	}
+}
