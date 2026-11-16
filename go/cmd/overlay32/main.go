@@ -43,7 +43,7 @@ var (
 	mainHWND         uintptr
 	renderer         *Renderer
 	clickThrough     atomic.Bool
-	isVisible        = true
+	isVisible        atomic.Bool // видимость окна: пишется только в UI-потоке (wndProc)
 	isFetching       atomic.Bool
 	isUserPositioned bool
 
@@ -77,6 +77,7 @@ func initAppDir() {
 	cfg = config.Load(cfgPath)
 
 	clickThrough.Store(cfg.ClickThrough)
+	isVisible.Store(true)
 }
 
 // logAgyTimeout — фиксирует в логе эффективный таймаут agy: по этой строке
@@ -99,7 +100,10 @@ func checkSingleInstance() (uintptr, bool) {
 		className, _ := windows.UTF16PtrFromString(windowClassName)
 		hExisting, _, _ := procFindWindowW.Call(uintptr(unsafe.Pointer(className)), 0)
 		if hExisting != 0 {
-			procShowWindow.Call(hExisting, SW_SHOW)
+			// Не ShowWindow напрямую: работающий инстанс сам поднимет окно и
+			// перерисовает его (иначе виден застывший кадр). Если он завис —
+			// SendMessage/ShowWindow из чужого потока подвесил бы и нас.
+			postMessage(hExisting, WM_USER_SHOW)
 		}
 		return 0, false
 	}
@@ -242,29 +246,18 @@ func setClickThroughState(enable bool) {
 	procSetWindowPos.Call(mainHWND, 0, 0, 0, 0, 0, uintptr(SWP_NOSIZE|SWP_NOMOVE|SWP_NOZORDER|SWP_FRAMECHANGED))
 }
 
-func toggleClickThrough() {
-	now := !clickThrough.Load()
-	clickThrough.Store(now)
-	setClickThroughState(now)
-	updateTrayClickThrough(now)
+func applyClickThrough(enable bool) {
+	clickThrough.Store(enable)
+	setClickThroughState(enable)
+	updateTrayClickThrough(enable)
 	if cfg != nil {
-		cfg.SaveClickThrough(now)
+		cfg.SaveClickThrough(enable)
 	}
-	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] click-through = %v", now))
+	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] click-through = %v", enable))
 }
 
-func toggleVisibility() {
-	if mainHWND == 0 {
-		return
-	}
-	isVisible = !isVisible
-	if isVisible {
-		procShowWindow.Call(mainHWND, SW_SHOW)
-		requestRender()
-	} else {
-		procShowWindow.Call(mainHWND, SW_HIDE)
-	}
-	updateTrayVisibility(isVisible)
+func toggleClickThrough() {
+	applyClickThrough(!clickThrough.Load())
 }
 
 func resetPosition() {
@@ -313,9 +306,84 @@ func applyWindowHeight(hwnd uintptr, newH int32) {
 }
 
 func requestRender() {
-	if mainHWND != 0 {
-		procPostMessageW.Call(mainHWND, WM_USER_RENDER, 0, 0)
+	postMessage(mainHWND, WM_USER_RENDER)
+}
+
+// postMessage — неблокирующая отправка сообщения окну из любого потока.
+func postMessage(hwnd uintptr, msg uint32) bool {
+	if hwnd == 0 {
+		return false
 	}
+	r, _, _ := procPostMessageW.Call(hwnd, uintptr(msg), 0, 0)
+	return r != 0
+}
+
+// requestToggleVisibility/requestToggleClickThrough — операции над окном
+// запрашиваются из UI-потока: прямой ShowWindow и запись isVisible из горутины
+// трея — гонка с wndProc, из-за которой окно оставалось скрытым.
+func requestToggleVisibility() {
+	postMessage(mainHWND, WM_USER_TOGGLE_VISIBILITY)
+}
+
+func requestToggleClickThrough() {
+	postMessage(mainHWND, WM_USER_TOGGLE_CLICKTHROUGH)
+}
+
+func requestSyncVisibility() {
+	postMessage(mainHWND, WM_USER_SYNC_VISIBILITY)
+}
+
+func requestResetPosition() {
+	postMessage(mainHWND, WM_USER_RESET_POSITION)
+}
+
+func windowIsVisible() bool {
+	if mainHWND == 0 {
+		return false
+	}
+	r, _, _ := procIsWindowVisible.Call(mainHWND)
+	return r != 0
+}
+
+// setVisibility — единственное место, где окно показывается/скрывается.
+// Вызывается только из UI-потока (wndProc).
+func setVisibility(visible bool, reason string) {
+	if mainHWND == 0 {
+		return
+	}
+	isVisible.Store(visible)
+	if visible {
+		procShowWindow.Call(mainHWND, SW_SHOW)
+		requestRender()
+	} else {
+		procShowWindow.Call(mainHWND, SW_HIDE)
+	}
+	updateTrayVisibility(visible)
+	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] visibility = %v (%s)", visible, reason))
+}
+
+func toggleVisibilityFromTray() {
+	setVisibility(!isVisible.Load(), "tray")
+}
+
+// syncVisibility сверяет наше состояние с фактическим состоянием окна: окно
+// могли показать снаружи (второй инстанс, ShowWindow из другого процесса) или
+// скрыть в обход нас. Рассогласование — это «застывший» кадр или пропавший
+// оверлей, поэтому лечим показом и принудительной перерисовкой.
+func syncVisibility() {
+	if mainHWND == 0 {
+		return
+	}
+	desired := isVisible.Load()
+	actual := windowIsVisible()
+	if desired == actual {
+		return
+	}
+	reason := "window was hidden externally"
+	if actual {
+		reason = "window was shown externally"
+	}
+	setVisibility(true, reason)
 }
 
 // agyTimeout — эффективный таймаут запуска agy: env LLM_LIMITS_AGY_TIMEOUT →
@@ -391,8 +459,29 @@ func wndProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
 		}
 		return 0
 
+	case WM_USER_TOGGLE_VISIBILITY:
+		toggleVisibilityFromTray()
+		return 0
+
+	case WM_USER_TOGGLE_CLICKTHROUGH:
+		toggleClickThrough()
+		return 0
+
+	case WM_USER_SHOW:
+		// Просьба показаться (второй инстанс / внешний вызов).
+		setVisibility(true, "show request")
+		return 0
+
+	case WM_USER_SYNC_VISIBILITY:
+		syncVisibility()
+		return 0
+
+	case WM_USER_RESET_POSITION:
+		resetPosition()
+		return 0
+
 	case WM_USER_RENDER:
-		if isVisible {
+		if isVisible.Load() {
 			snapMu.RLock()
 			s := lastSnapshot
 			snapMu.RUnlock()
@@ -512,7 +601,7 @@ func main() {
 	// Первый рендеринг
 	renderer.Render(lastSnapshot, cfg)
 	renderer.Present(hwnd, posX, posY)
-	procShowWindow.Call(hwnd, SW_SHOW)
+	setVisibility(true, "startup")
 
 	// Запуск трея
 	go runTray()
@@ -521,11 +610,13 @@ func main() {
 	triggerFetch(false)
 
 	// Тикер на 10с для перерисовки относительного времени без сетевых запросов
+	// и самовосстановления видимости окна (сверка с IsWindowVisible).
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
 			requestRender()
+			requestSyncVisibility()
 		}
 	}()
 

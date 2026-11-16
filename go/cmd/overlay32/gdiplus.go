@@ -73,6 +73,7 @@ var (
 	procUnregisterHotKey      = user32.NewProc("UnregisterHotKey")
 	procGetSystemMetrics      = user32.NewProc("GetSystemMetrics")
 	procSystemParametersInfoW = user32.NewProc("SystemParametersInfoW")
+	procIsWindowVisible       = user32.NewProc("IsWindowVisible")
 
 	// Kernel32
 	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
@@ -204,7 +205,12 @@ const (
 	HOTKEY_ID  = 101
 
 	// Custom messages
-	WM_USER_RENDER = 0x0400 + 1
+	WM_USER_RENDER              = 0x0400 + 1
+	WM_USER_TOGGLE_VISIBILITY   = 0x0400 + 2
+	WM_USER_TOGGLE_CLICKTHROUGH = 0x0400 + 3
+	WM_USER_SHOW                = 0x0400 + 4
+	WM_USER_SYNC_VISIBILITY     = 0x0400 + 5
+	WM_USER_RESET_POSITION      = 0x0400 + 6
 )
 
 func argb(a, r, g, b uint8) uint32 {

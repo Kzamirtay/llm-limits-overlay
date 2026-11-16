@@ -6,6 +6,7 @@ import (
 	_ "embed"
 
 	"fyne.io/systray"
+	"llmlimits/internal/fetchers"
 )
 
 //go:embed app.ico
@@ -17,7 +18,22 @@ var (
 	mClickThrough *systray.MenuItem
 	mResetPos     *systray.MenuItem
 	mQuit         *systray.MenuItem
+
+	// trayUpdates — очередь правок меню трея. Правки делает только горутина
+	// трея (systray не потокобезопасен), а приходят они из UI-потока окна,
+	// поэтому отправляем через канал и никогда не блокируемся: зависший трей
+	// раньше вешал главный поток окна, и оверлей переставал реагировать.
+	trayUpdates = make(chan func(), 32)
 )
+
+// sendToTray ставит правку меню в очередь трея. Если очередь переполнена
+// (трей завис) — правка отбрасывается: состояние окна важнее украшения меню.
+func sendToTray(fn func()) {
+	select {
+	case trayUpdates <- fn:
+	default:
+	}
+}
 
 func runTray() {
 	systray.Run(onTrayReady, onTrayExit)
@@ -35,6 +51,8 @@ func onTrayReady() {
 	systray.AddSeparator()
 	mQuit = systray.AddMenuItem("Выход", "Закрыть оверлей")
 
+	fetchers.LogLine(appDir, "[overlay32] tray ready")
+
 	go handleTrayEvents()
 }
 
@@ -49,13 +67,14 @@ func handleTrayEvents() {
 			triggerFetch(true)
 
 		case <-mVisibility.ClickedCh:
-			toggleVisibility()
+			// Окно трогает только UI-поток: см. wndProc / setVisibility.
+			requestToggleVisibility()
 
 		case <-mClickThrough.ClickedCh:
-			toggleClickThrough()
+			requestToggleClickThrough()
 
 		case <-mResetPos.ClickedCh:
-			resetPosition()
+			requestResetPosition()
 
 		case <-mQuit.ClickedCh:
 			systray.Quit()
@@ -63,28 +82,35 @@ func handleTrayEvents() {
 				procPostMessageW.Call(mainHWND, WM_DESTROY, 0, 0)
 			}
 			return
+
+		case fn := <-trayUpdates:
+			fn()
 		}
 	}
 }
 
 func updateTrayClickThrough(enabled bool) {
-	if mClickThrough == nil {
-		return
-	}
-	if enabled {
-		mClickThrough.Check()
-	} else {
-		mClickThrough.Uncheck()
-	}
+	sendToTray(func() {
+		if mClickThrough == nil {
+			return
+		}
+		if enabled {
+			mClickThrough.Check()
+		} else {
+			mClickThrough.Uncheck()
+		}
+	})
 }
 
 func updateTrayVisibility(visible bool) {
-	if mVisibility == nil {
-		return
-	}
-	if visible {
-		mVisibility.SetTitle("Скрыть")
-	} else {
-		mVisibility.SetTitle("Показать")
-	}
+	sendToTray(func() {
+		if mVisibility == nil {
+			return
+		}
+		if visible {
+			mVisibility.SetTitle("Скрыть")
+		} else {
+			mVisibility.SetTitle("Показать")
+		}
+	})
 }
