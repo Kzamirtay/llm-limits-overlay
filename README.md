@@ -328,6 +328,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
+> - **v2.2.2**: Fixed the overlay “disappearing” / freezing. The window was hidden with `SW_HIDE` while the process stayed alive (fetches kept running), and the tray could not bring it back once its thread hung (`IsHungAppWindow=true`). Now show/hide, click-through and position reset run only on the window's UI thread (the tray posts messages instead of calling `ShowWindow` directly), `isVisible` is an `atomic.Bool`, tray menu updates go through a drop-on-overflow queue so a stuck `systray` thread can no longer block the window, and every 10 s the app compares its own state with `IsWindowVisible` and repairs a window hidden/shown behind its back (show + full repaint). A second instance no longer calls `ShowWindow` on someone else's window (that produced a frozen frame) — it posts a show request and the running instance repaints. Show/hide events and tray readiness are now logged (`visibility = … (reason)`, `tray ready`).
 > - **v2.2.1**: The overlay no longer hardcodes an 8 s agy timeout: the Windows platform default is 25 s, overridable via `LLM_LIMITS_AGY_TIMEOUT` and the new `"agyTimeout"` key (1–120) in `overlay.config.json`. A single "Refresh" click no longer disables the agy cache until the next process restart — the bypass now lasts one cycle only (it used to re-spawn `agy.exe` every 60 s). Otherwise `agy.exe` (~230 MB, 5–8 s startup) was killed by the timeout, the fail-closed latch engaged, and the GEMINI card stayed frozen on the last snapshot until credentials changed.
 > - **v2.2.0**: New OpenCode Go provider — 5h / 7d / 30d dollar windows (`$12` / `$30` / `$60`) taken straight from `https://opencode.ai/zen/go/v1/usage` with the console API key (`OPENCODE_GO_API_KEY`); percentage, reset countdown and remaining dollars on the card, `rate-limited` shown as exhausted, missing windows shown as `--`. No OAuth tokens involved. The new `limits` config object selects which periodic windows are drawn for each provider type (card height and CLI rows follow), and an exhausted longer window hides the shorter ones.
 > - **v2.1.7**: AGY (Antigravity CLI) Windows 1.5.4 support — structural validation of the new credential file (`acp_token.json`) alongside legacy paths (read-only; malformed/irrelevant files never launch the CLI, so no OAuth popup risk from a broken file). After an auth failure — including a silent timeout while the CLI waits for browser sign-in — the launcher latches on the credential fingerprint and does not relaunch AGY until the credentials actually change or the user explicitly retries (force refresh / `--no-cache`); no repeated browser windows every minute. A revoked session may still open one browser window on the first launch; the latch suppresses only repeats. Placeholder buckets are now shown honestly (`--` / `нет данных`) instead of a fabricated `0%`; a real `0%` stays `0%`; cached valid values survive failures as `stale` instead of being erased.
@@ -351,7 +352,7 @@ The following files must be located in the same directory as `llm-limits-overlay
 ### Launch Options
 
 #### 1. Running the Prebuilt Binary from Releases
-1. Download the latest `LlmLimitsOverlay-v2.2.1-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
+1. Download the latest `LlmLimitsOverlay-v2.2.2-win64.zip` from [Releases](https://github.com/Kzamirtay/llm-limits-overlay/releases).
 2. Extract the archive into any preferred directory.
 3. Create your `.env` file with your API keys (copy from `.env.example`).
 4. Ensure `agy.exe` is installed and you are signed in (`agy auth login`).
@@ -377,7 +378,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/llm-limi
 ```
 
 #### 3. Windows Installer (v2.0.0+)
-A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.2.1.exe` (Inno Setup 6).
+A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.2.2.exe` (Inno Setup 6).
 
 **Features:**
 - Installs `llm-limits-overlay.exe` (GUI) and `llm-limits.exe` (CLI) to `%LOCALAPPDATA%\LlmLimitsOverlay` — no UAC elevation required.
@@ -390,7 +391,7 @@ A per-user Windows installer is available: `LlmLimitsOverlay-Setup-2.2.1.exe` (I
 
 **Silent install (for automation):**
 ```cmd
-LlmLimitsOverlay-Setup-2.2.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
+LlmLimitsOverlay-Setup-2.2.2.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%TEMP%\llmo-install.log
 ```
 > [!NOTE]
 > **SmartScreen warning**: The installer is not code-signed (no EV certificate). Windows SmartScreen will show "Windows protected your PC" — click "More info" → "Run anyway". This is expected for open-source projects without a paid certificate.
@@ -404,7 +405,7 @@ LlmLimitsOverlay-Setup-2.2.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=%
 A companion console utility ships next to the GUI (same Go fetch engine, same timeouts, same cache). It prints quota status to the terminal for scripts and quick checks.
 
 ```cmd
-llm-limits --version         # prints "llm-limits 2.2.1"
+llm-limits --version         # prints "llm-limits 2.2.2"
 llm-limits --json            # works from any folder — installer adds it to your user PATH
 llm-limits --provider kimi
 llm-limits --watch 30        # refresh loop; Ctrl+C to exit

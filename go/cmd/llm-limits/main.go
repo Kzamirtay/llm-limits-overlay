@@ -33,6 +33,9 @@ var colorEnabled bool
 var providers []config.Provider
 var activeCfg *config.Config
 
+// version — единственный источник версии в выводе CLI: --version и заголовок help.
+const version = "2.2.2"
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -49,7 +52,7 @@ func run(args []string) int {
 		return 0
 	}
 	if opt.version {
-		fmt.Println("llm-limits 2.2.1")
+		fmt.Println("llm-limits " + version)
 		return 0
 	}
 
@@ -660,7 +663,7 @@ func isTTY() bool {
 }
 
 func printHelp() {
-	fmt.Println("llm-limits 2.2.1 - LLM quota status in the terminal (Kimi / OpenRouter / OpenCode Go / Gemini+Claude-GPT / Codex)")
+	fmt.Println("llm-limits " + version + " - LLM quota status in the terminal (Kimi / OpenRouter / OpenCode Go / Gemini+Claude-GPT / Codex)")
 	fmt.Println()
 	fmt.Println("Usage: llm-limits [options]")
 	fmt.Println()
@@ -675,7 +678,7 @@ func printHelp() {
 	fmt.Println("  --agy-bin <path>        Explicit path to agy binary")
 	fmt.Println("  --agy-timeout <sec>     agy spawn timeout, 1..120 (default: Windows 25s, Linux/macOS 20s; env LLM_LIMITS_AGY_TIMEOUT, config \"agyTimeout\")")
 	fmt.Println("  --no-color              Disable ANSI colors (also honors NO_COLOR)")
-	fmt.Println("  --version, -v           Show version (2.2.1)")
+	fmt.Println("  --version, -v           Show version (" + version + ")")
 	fmt.Println("  --help                  Show this help")
 	fmt.Println()
 	fmt.Println("Exit codes: 0 = all providers online, 2 = some stale, 1 = all failed / config error")

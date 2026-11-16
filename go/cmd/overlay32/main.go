@@ -27,6 +27,9 @@ const (
 	windowWidth     = 290
 	defaultHeight   = 402
 
+	// appVersion — единственный источник версии в логе и тултипе трея.
+	appVersion = "2.2.2"
+
 	// Отступы оверлея от края рабочей области (work area)
 	defaultMarginRight  = 12
 	defaultMarginBottom = 12
@@ -519,7 +522,7 @@ func main() {
 	defer windows.CloseHandle(windows.Handle(hMutex))
 
 	initAppDir()
-	fetchers.LogLine(appDir, fmt.Sprintf("=== LLM Limits Overlay v2.2.1 Starting (PID=%d) ===", os.Getpid()))
+	fetchers.LogLine(appDir, fmt.Sprintf("=== LLM Limits Overlay v%s Starting (PID=%d) ===", appVersion, os.Getpid()))
 	logAgyTimeout()
 
 	// GDI+ Startup

@@ -42,7 +42,7 @@ func runTray() {
 func onTrayReady() {
 	systray.SetIcon(trayIconBytes)
 	systray.SetTitle("LLM Limits Overlay")
-	systray.SetTooltip("LLM Limits Overlay v2.2.1 (Win32 Native)")
+	systray.SetTooltip("LLM Limits Overlay v" + appVersion + " (Win32 Native)")
 
 	mRefresh = systray.AddMenuItem("Обновить квоты", "Принудительно обновить квоты")
 	mVisibility = systray.AddMenuItem("Скрыть", "Показать/Скрыть оверлей")
