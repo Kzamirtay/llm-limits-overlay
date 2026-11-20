@@ -34,7 +34,7 @@ var providers []config.Provider
 var activeCfg *config.Config
 
 // version — единственный источник версии в выводе CLI: --version и заголовок help.
-const version = "2.2.2"
+const version = "2.3.0"
 
 func main() {
 	os.Exit(run(os.Args[1:]))

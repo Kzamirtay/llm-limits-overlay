@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -28,7 +29,7 @@ const (
 	defaultHeight   = 402
 
 	// appVersion — единственный источник версии в логе и тултипе трея.
-	appVersion = "2.2.2"
+	appVersion = "2.3.0"
 
 	// Отступы оверлея от края рабочей области (work area)
 	defaultMarginRight  = 12
@@ -96,8 +97,20 @@ func logAgyTimeout() {
 	fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] agy timeout %ds (%s)", agyTimeout(), src))
 }
 
+// instanceMutexName — имя мьютекса «один экземпляр». Переменная окружения
+// LLM_LIMITS_INSTANCE_SUFFIX даёт отдельное имя: так тестовую сборку можно
+// запустить рядом с установленной, не останавливая рабочую копию.
+func instanceMutexName() string {
+	const base = "Local\\llm-limits-overlay32-instance-guid-52b36ded"
+	suffix := strings.TrimSpace(os.Getenv("LLM_LIMITS_INSTANCE_SUFFIX"))
+	if suffix == "" {
+		return base
+	}
+	return base + "-" + suffix
+}
+
 func checkSingleInstance() (uintptr, bool) {
-	mutexName, _ := windows.UTF16PtrFromString("Local\\llm-limits-overlay32-instance-guid-52b36ded")
+	mutexName, _ := windows.UTF16PtrFromString(instanceMutexName())
 	hMutex, _, err := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(mutexName)))
 	if hMutex != 0 && err == windows.ERROR_ALREADY_EXISTS {
 		className, _ := windows.UTF16PtrFromString(windowClassName)
@@ -426,6 +439,9 @@ func triggerFetch(forceAgy bool) {
 			lastSnapshot = snap
 			snapMu.Unlock()
 			requestRender()
+			// Трей живёт по тем же данным, что и окно: тултип, строки меню
+			// и значок обновляются в конце каждого цикла.
+			updateTrayFromSnapshot(snap)
 		}
 	}()
 }
@@ -606,11 +622,38 @@ func main() {
 	renderer.Present(hwnd, posX, posY)
 	setVisibility(true, "startup")
 
-	// Запуск трея
-	go runTray()
+	// Трей: своё окно-приёмник (меню, подсказки, balloon).
+	if err := trayStart(); err != nil {
+		fetchers.LogLine(appDir, fmt.Sprintf("[overlay32] tray init failed: %v", err))
+	}
+
+	// Где показывать лимиты: полоса на панели задач (по умолчанию) или значки
+	// в области уведомлений. Если панель задач не найдена или стоит
+	// вертикально — откат на значки, как это делает BatteryHub.
+	if cfg.WantTaskbarStrip() && stripStart() {
+		trayUseIcons(cfg.ShowTrayIcons())
+	} else {
+		trayUseIcons(true)
+	}
+
+	// Значки и меню должны показать кэш с диска сразу, не дожидаясь сети:
+	// иначе первый цикл agy (до 25 с) оставляет трей пустым.
+	updateTrayFromSnapshot(lastSnapshot)
 
 	// Фоновый первый фетч
 	triggerFetch(false)
+
+	// Тикер на 1с: полоса на панели задач должна ехать за панелью
+	// (разрешение, DPI, ширина области уведомлений, автопрятание).
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if stripOn && trayHWND != 0 {
+				procPostMessageW.Call(trayHWND, WM_USER_STRIP_TICK, 0, 0)
+			}
+		}
+	}()
 
 	// Тикер на 10с для перерисовки относительного времени без сетевых запросов
 	// и самовосстановления видимости окна (сверка с IsWindowVisible).

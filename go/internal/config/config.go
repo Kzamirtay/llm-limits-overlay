@@ -42,13 +42,13 @@ func StripBOM(b []byte) []byte {
 // Provider — запись из overlay.config.json ("providers": [...]).
 // Только явные типы: kimi | openrouter | agy. Неизвестный type пропускается.
 type Provider struct {
-	Id       string
-	Type     string
-	Title    string
-	BaseUrl  string
+	Id        string
+	Type      string
+	Title     string
+	BaseUrl   string
 	ApiKeyEnv string
-	ApiKey   string
-	Enabled  bool
+	ApiKey    string
+	Enabled   bool
 }
 
 type Config struct {
@@ -60,10 +60,53 @@ type Config struct {
 	// 0 = платформенный дефолт (Windows 25 с, Unix 20 с). Нужен потому, что
 	// agy.exe на Windows весит ~230 МБ и стартует 5–8 с.
 	AgyTimeoutSec int
+	// TrayMode — где показывать лимиты: "taskbar" (полоса на панели задач,
+	// по умолчанию), "tray" (значки в области уведомлений) или "both".
+	// Значки трея в режиме "taskbar" остаются только как откат, если панель
+	// задач не найдена или стоит вертикально.
+	TrayMode string
 	// Limits — какие окна (периодные лимиты) показывать для каждого типа:
 	// {"kimi":{"7d":false},"opencode":{"5h":false},...}. Отсутствующая запись
 	// или отсутствующий ключ = показывать; false = строка скрыта.
 	Limits map[string]map[string]bool
+}
+
+// Режимы отображения лимитов.
+const (
+	TrayModeTaskbar = "taskbar"
+	TrayModeTray    = "tray"
+	TrayModeBoth    = "both"
+)
+
+// NormalizeTrayMode приводит строку из конфига к одному из режимов.
+// Пустая строка означает «неизвестное значение»: вызывающая сторона
+// оставляет дефолт.
+func NormalizeTrayMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case TrayModeTaskbar, "panel", "strip":
+		return TrayModeTaskbar
+	case TrayModeTray, "icons", "notification":
+		return TrayModeTray
+	case TrayModeBoth:
+		return TrayModeBoth
+	}
+	return ""
+}
+
+// ShowTrayIcons — нужны ли значки в области уведомлений в этом режиме.
+func (c *Config) ShowTrayIcons() bool {
+	if c == nil {
+		return false
+	}
+	return c.TrayMode == TrayModeTray || c.TrayMode == TrayModeBoth
+}
+
+// WantTaskbarStrip — нужна ли полоса на панели задач в этом режиме.
+func (c *Config) WantTaskbarStrip() bool {
+	if c == nil {
+		return true
+	}
+	return c.TrayMode != TrayModeTray
 }
 
 // ShowWindow — показывать ли окно key у провайдера типа typeName.
@@ -115,6 +158,7 @@ func Load(path string) *Config {
 		Path:               path,
 		ClickThrough:       true,
 		ClickThroughHotkey: "Ctrl+Alt+L",
+		TrayMode:           TrayModeTaskbar,
 	}
 	if path == "" {
 		return cfg
@@ -142,6 +186,12 @@ func Load(path string) *Config {
 	// старый конфиг обязан грузиться без ошибки.
 	if v, ok := root["agyTimeout"].(float64); ok && v >= 1 && v <= 120 {
 		cfg.AgyTimeoutSec = int(v)
+	}
+	// "trayMode": taskbar | tray | both. Неизвестное значение — дефолт.
+	if v, ok := root["trayMode"].(string); ok {
+		if m := NormalizeTrayMode(v); m != "" {
+			cfg.TrayMode = m
+		}
 	}
 	if rawProviders, ok := root["providers"].([]interface{}); ok {
 		cfg.Providers = parseProviders(rawProviders)
@@ -255,5 +305,5 @@ func getStr(d map[string]interface{}, key string) string {
 }
 
 func itoa(n int) string {
-	return string(rune('0'+n%10))
+	return string(rune('0' + n%10))
 }

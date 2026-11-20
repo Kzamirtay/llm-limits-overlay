@@ -27,7 +27,8 @@
 - **Free Dragging & System Tray Control**:
   - Left-click and drag: Move the HUD to any preferred position on the screen.
   - Right-click: Context menu for manual quota refresh and exiting.
-  - Windows System Tray icon: Single-click show/hide, comprehensive control menu, position reset, and tooltip with live percentages.
+  - Windows System Tray icon: Single-click show/hide, comprehensive control menu, position reset, and a live gauge icon plus tooltip with live percentages.
+- **Quotas on the taskbar (v2.3.0+)**: a `K 9%  O 22%  G 5%` strip left of the notification area — the provider letter and its worst percentage as text that stays readable at any DPI; hover gives details, a click opens the menu. The mode is configurable (`trayMode`: `taskbar` / `tray` / `both`), and when the strip cannot be placed (vertical taskbar, secondary monitor without an anchor) the app falls back to ring icons in the notification area with the provider letter inside.
 - **Fast Native Polling (v1.2.0+, no Python / WSL required)**:
   - All quota fetches run **in-process** as concurrent async tasks — no subprocess spawning, no `wsl.exe`, no Python.
   - Per-provider timeouts: HTTP 3.5 s for OpenRouter / Kimi; 8 s for `agy.exe`.
@@ -141,28 +142,58 @@ Timestamp semantics:
 
 ---
 
-## System Tray Icon
+## Where Quotas Are Shown
 
-The application includes an icon in the Windows Notification Area (System Tray), providing complete control over the HUD even when the window is hidden or covered by full-screen applications.
+Quotas appear in one of two places; the mode is picked by the `trayMode` key in `overlay.config.json`:
 
-### Tray Icon Interactions
-- **Single or Double Left-Click**: Instantly toggles HUD visibility (window coordinates are fully preserved across hide/show cycles).
-- **Tooltip**: Hovering over the icon displays a compact one-line status summary (e.g., `Kimi 7d 100% · Gemini 47% · Claude 50% [click-through]`), updated on every polling tick.
+| Mode | What you see |
+|---|---|
+| `taskbar` *(default)* | A `K 9%  O 22%  G 5%` strip on the taskbar, left of the notification area |
+| `tray` | One ring icon per provider in the notification area |
+| `both` | Both the strip and the icons |
 
-### Tray Context Menu (Right-Click)
-- **Show Overlay / Hide Overlay** — Toggles window visibility while maintaining coordinates.
+### Taskbar strip
+
+- **What is drawn**: the **provider icon** and its **worst** percentage — the same number the icon ring fills with, but as text that stays readable at any DPI: `◍ 9%  ▯ 22%  ✦ 4%`. Icons are monochrome and tinted with the text colour (so they work on dark and light taskbars), embedded in the binary as 64×64 PNGs and scaled to the font size. Source: [Simple Icons](https://simpleicons.org) (CC0); the logos themselves are trademarks of their owners and are used here only as provider labels.
+- **Without an icon** (e.g. CODEX: OpenAI removed its logo from the free set) the letter is used instead: `X 5%`. Letter map: `K` — KIMI, `O` — OPENCODE GO, `R` — OPENROUTER, `X` — CODEX, `G` — GEMINI, `C` — CLAUDE/GPT.
+- **Styles**: normal data in the regular weight, an exhausted limit (`100%`) in bold, missing/stale data dimmed (`K --`). Monochrome, like the rest of the overlay, and it follows the taskbar theme.
+- **Hover**: a tooltip of our own in HUD style — the same frosted rounded plate, the provider icon, the name in bold, then a table: one column per window, the percentage in the regular colour and the **time until reset** dimmed:
+
+  ```
+  KIMI          7d 9%   3d 5h    5h 6%   2h 55m
+  OPENCODE GO   7d 22%  2d 10h   5h 2%   1h 33m
+  GEMINI        7d 0%   6d 23h   5h 4%   3h 38m
+  ```
+
+  It appears after ~0.45 s and disappears on mouse leave or click. The system `tooltips_class32` is not used: without a Common Controls 6.0 manifest it renders as the classic yellow rectangle that clashes with the taskbar.
+- **Click (any button)**: opens the same context menu the tray icons have — refresh, show/hide overlay, click-through, reset position, exit.
+- **How it works**: the strip is a layered **child window of the taskbar itself** (`WS_CHILD` in `Shell_TrayWnd`, drawn with `UpdateLayeredWindow`), so it moves with the bar. Its position is recomputed once a second (`TrayNotifyWnd` on the left, `ClockButton` as a fallback) and the window is force-raised in z-order: the taskbar periodically raises its own children, and without that the strip stays visible but stops receiving mouse input. The approach mirrors [BatteryHub](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor).
+- **Limitations** (deliberate): the strip is drawn only on a **horizontal** taskbar and only where there is something to anchor to — the notification area or the clock. On Windows 11 secondary taskbars the clock is drawn by XAML and has no child window, so the strip is not placed there (the position is never guessed, to avoid covering the clock or task buttons). RTL taskbars are skipped too. In all those cases the tray icons take over.
+- **Fragility**: the taskbar is a private Windows control and its internal classes may change after a system update. That is why the tray-icon fallback is built in and engages automatically when the strip cannot be created.
+
+### Notification-area icons (mode `tray` / `both`)
+
+- **Single or Double Left-Click**: instantly toggles HUD visibility (window coordinates are fully preserved).
+- **Live icons**: one icon per provider (and per enabled AGY card block). Each ring fills clockwise from 12 o'clock by that provider's **worst** window, re-rendered only on 5% steps. Without data (`no key`/`error`) only the track is drawn: an empty ring would read as a fabricated `0%`.
+- **The letter inside the ring** tells providers apart: the ring hole is about 9 pixels at 16 px, where a logo turns into mush, while one glyph of the built-in 5×7 font (`internal/trayui/glyph.go`) stays readable. Logos are used in the strip and the tooltip, where they get 16 px or more.
+- **Taskbar theme**: icons are monochrome and follow the theme (`SystemUsesLightTheme`), since Windows never inverts tray icons.
+- **Order on the taskbar is chosen by Windows** (it prepends new icons on the left): the letter-to-provider mapping is always confirmed by the tooltip and the menu rows.
+- **Tooltip**: each icon has its own (e.g. `KIMI 7d 6% · 5h 0%`), capped at the shell's 127-character limit.
+
+### Context menu (right-click the strip or any icon)
+
+- **`LLM Limits v<version>`** — non-clickable header.
+- **Provider rows** (`KIMI — 7d 6% · 5h 0%`, …) — non-clickable info rows with live numbers, the same windows and the same exhausted-limit collapsing rule as the HUD cards. Stale data is tagged `(stale)`, a missing key shows `no key`.
 - *Separator*
-- **Refresh Quotas** — Forces an immediate API query (disabled while a query is in progress).
-- **Click-Through** — Toggles mouse click-through transparency mode.
+- **Refresh Quotas** — forces an immediate API query.
+- **Show Overlay / Hide Overlay** — toggles window visibility while keeping coordinates; the label reflects the actual state.
+- **Click-Through** — toggles mouse click-through mode (with a check mark and a balloon notification).
 - *Separator*
-- **Reset Position** — Restores the HUD to its default docking spot in the bottom-right corner above the taskbar.
-- **Exit** — Safely unregisters global hotkeys, cleans up the tray icon, closes the window, and terminates the background process.
+- **Reset Position** — restores the HUD to its default docking spot.
+- **Exit** — removes the strip and icons, closes the window, and terminates the process.
 
 > [!NOTE]
-> **Windows 11**: By default, Windows 11 places new tray icons inside the overflow menu (the `^` arrow button). To keep the overlay icon always visible:
-> Navigate to **Settings → Personalization → Taskbar → Other system tray icons** and enable the toggle for the overlay, or simply drag the icon from the `^` flyout directly onto the primary taskbar.
-
----
+> **Windows 11 and tray icons**: by default new icons land in the overflow flyout (the `^` button). In `tray`/`both` modes each icon is pinned separately: **Settings → Personalization → Taskbar → Other system tray icons**.
 
 ## Click-Through Mode
 
@@ -180,7 +211,7 @@ When interactive manipulation is needed (to reposition the window or open its co
 2. **System Tray Context Menu**: Right-click the system tray icon → select **Click-Through** (uncheck).
 3. **Configuration File**: Set `"clickThrough": false` in `overlay.config.json` to start in standard interactive mode.
 
-Each state change displays an informative balloon tip in the system tray, and the tooltip reflects the active mode with a `[click-through]` tag. The preference is automatically saved to `overlay.config.json` and restored on subsequent launches.
+Each state change displays an informative balloon tip from the tray, and the active mode is reflected by the check mark on the **Click-Through** menu item. The preference is automatically saved to `overlay.config.json` and restored on subsequent launches.
 
 > [!WARNING]
 > **Click-Through Mode Limitation**: While click-through is enabled, mouse clicks directly on the overlay window are ignored by design.
@@ -198,10 +229,12 @@ The configuration file is automatically created next to the executable if not pr
 {
   "clickThrough": true,
   "clickThroughHotkey": "Ctrl+Alt+L",
-  "agyTimeout": 25
+  "agyTimeout": 25,
+  "trayMode": "taskbar"
 }
 ```
 
+- `trayMode`: where quotas are shown — `"taskbar"` (default: a `K 9% O 22% G 5%` strip on the taskbar, left of the notification area), `"tray"` (notification-area icons) or `"both"`. An unknown value silently keeps the default; `panel`/`strip` are aliases for `taskbar`, `icons` for `tray`.
 - `clickThrough`: Startup click-through state (default `true`). Set to `false` for standard interactive mode.
 - `clickThroughHotkey`: Global shortcut for toggling click-through (default `"Ctrl+Alt+L"`).
 - `agyTimeout` *(optional)*: `agy.exe` spawn timeout in seconds, 1–120. Defaults to **25 s on Windows** and **20 s on Linux/macOS**: `agy.exe` weighs ~230 MB and answers in 5–8 s, so a too-small value kills the process on timeout, trips the fail-closed latch, and freezes the GEMINI card on the last snapshot until credentials change or Refresh. Precedence: `--agy-timeout` → `LLM_LIMITS_AGY_TIMEOUT` → this key → platform default; garbage and out-of-range values are ignored silently.
@@ -266,6 +299,7 @@ Rules: a missing type or window key means **shown** (an old config keeps working
 - `LLM_LIMITS_AGY_TIMEOUT`: agy spawn timeout in seconds (1–120); beats the `agyTimeout` config key, but loses to the `--agy-timeout` flag.
 - `LLM_LIMITS_QUOTA_CACHE_SECONDS`: Cache duration for Antigravity quota calls (default `300`).
 - `LLM_LIMITS_JSON` / `AGY_LIMITS_JSON`: Output path for the cached quota JSON file.
+- `LLM_LIMITS_INSTANCE_SUFFIX`: Suffix for the single-instance mutex name. Empty means normal behaviour; any suffix lets a second copy run next to the installed one (used to verify a build without stopping the live overlay).
 
 ---
 
@@ -328,6 +362,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 > [!NOTE]
 > **Version History**:
+> - **v2.3.0**: The tray stopped being decorative and became multi-icon. Instead of `fyne.io/systray` (one icon, its own menu, an image file in `%TEMP%` per repaint) the tray is now ours: `Shell_NotifyIconW` + `CreateIconIndirect` + native `CreatePopupMenu`/`TrackPopupMenu`, no temp files at all. There is **one icon per provider** (and per enabled AGY card block); each is a monochrome ring filled clockwise from 12 o'clock by that provider's worst window, rebuilt only on 5% steps, and follows the taskbar theme via `HKCU\…\Themes\Personalize\SystemUsesLightTheme` (Windows never inverts tray icons). Providers are told apart by a letter in the ring hole (`K`/`O`/`R`/`X`/`G`/`C`) — full text does not survive 16 px, while a single glyph from the built-in 5×7 font stays crisp. Without data only the track is drawn, since an empty ring would read as a fabricated `0%`. Every icon has a live tooltip (previously `tray.go` set one static string at startup), capped at the shell's 127 UTF-16 units with an explicit ellipsis. The menu works on any icon: version header, live provider rows with the same windows and the same exhausted-limit collapsing rule as the HUD cards, the actions (refresh / show-hide / click-through / reset position / exit) and a balloon when click-through toggles. Summary building and ring drawing live in `internal/trayui` (pure Go, unit-tested on Linux); only the HICON, the registry read and `Shell_NotifyIcon` are Windows-specific. The second display mode is a `K 9%  O 22%  G 5%` strip on the taskbar (default, `trayMode` key): a layered child window of the taskbar itself, left of the notification area, with a hover tooltip and the menu on click; the position is recomputed every second and the window is force-raised in z-order (otherwise the taskbar grabs the mouse), the hover tooltip is our own HUD-styled layered window rather than the system yellow tooltip, and it falls back to ring icons on a vertical taskbar or when there is no anchor.
 > - **v2.2.2**: Fixed the overlay “disappearing” / freezing. The window was hidden with `SW_HIDE` while the process stayed alive (fetches kept running), and the tray could not bring it back once its thread hung (`IsHungAppWindow=true`). Now show/hide, click-through and position reset run only on the window's UI thread (the tray posts messages instead of calling `ShowWindow` directly), `isVisible` is an `atomic.Bool`, tray menu updates go through a drop-on-overflow queue so a stuck `systray` thread can no longer block the window, and every 10 s the app compares its own state with `IsWindowVisible` and repairs a window hidden/shown behind its back (show + full repaint). A second instance no longer calls `ShowWindow` on someone else's window (that produced a frozen frame) — it posts a show request and the running instance repaints. Show/hide events and tray readiness are now logged (`visibility = … (reason)`, `tray ready`).
 > - **v2.2.1**: The overlay no longer hardcodes an 8 s agy timeout: the Windows platform default is 25 s, overridable via `LLM_LIMITS_AGY_TIMEOUT` and the new `"agyTimeout"` key (1–120) in `overlay.config.json`. A single "Refresh" click no longer disables the agy cache until the next process restart — the bypass now lasts one cycle only (it used to re-spawn `agy.exe` every 60 s). Otherwise `agy.exe` (~230 MB, 5–8 s startup) was killed by the timeout, the fail-closed latch engaged, and the GEMINI card stayed frozen on the last snapshot until credentials changed.
 > - **v2.2.0**: New OpenCode Go provider — 5h / 7d / 30d dollar windows (`$12` / `$30` / `$60`) taken straight from `https://opencode.ai/zen/go/v1/usage` with the console API key (`OPENCODE_GO_API_KEY`); percentage, reset countdown and remaining dollars on the card, `rate-limited` shown as exhausted, missing windows shown as `--`. No OAuth tokens involved. The new `limits` config object selects which periodic windows are drawn for each provider type (card height and CLI rows follow), and an exhausted longer window hides the shorter ones.
@@ -345,7 +380,7 @@ The primary executable for the overlay is **`llm-limits-overlay.exe`**.
 
 ### Runtime Directory Requirements
 The following files must be located in the same directory as `llm-limits-overlay.exe`:
-- `assets/app.ico` — Application icon for the HUD and system tray;
+- `assets/app.ico` — Application icon for the executable and installer (tray icons are drawn in memory and never use `app.ico`);
 - `overlay.config.json` — Configuration file (automatically generated if missing);
 - `.env` — API key configuration file (`OPENROUTER_API_KEY`, `KIMI_API_KEY`).
 
@@ -443,7 +478,7 @@ llm-limits --watch 30
 
 #### 6. Go Native GUI Architecture (Win32 Layered Window)
 The v2.0.0 GUI (`llm-limits-overlay.exe`) is implemented in pure Go (`go/cmd/overlay32`) with zero CGO dependencies:
-- **Stack**: Pure Go (`CGO_ENABLED=0`), `UpdateLayeredWindow` with a 32-bit DIB section (BGRA, premultiplied alpha), GDI+ for anti-aliasing and typography, `fyne.io/systray` for system tray integration, Win32 API (`RegisterHotKey`, `HTCAPTION` drag).
+- **Stack**: Pure Go (`CGO_ENABLED=0`), `UpdateLayeredWindow` with a 32-bit DIB section (BGRA, premultiplied alpha), GDI+ for anti-aliasing and typography, Win32 API for the tray (`Shell_NotifyIconW`, `CreateIconIndirect`, `CreatePopupMenu`/`TrackPopupMenu` — no third-party library) and for the window (`RegisterHotKey`, `HTCAPTION` drag).
 - **Design & Layout**:
   - Translucent frosted slate backdrop (`#7CEEF2F6`), subtle border (`#2064748B`), black titles (`#000000`), slate label text (`#0F172A`), muted status text (`#475569`).
   - Linear color interpolation for progress bars from neutral gray (`#4B5563`) to deep graphite (`#111827`).
